@@ -59,7 +59,7 @@ class Maudy(nn.Module):
         idx = torch.LongTensor(
             [
                 [
-                    meas.value
+                    reactions.index(meas.reaction)
                     for meas in exp.measurements
                     if meas.target_type == MeasurementType.FLUX
                 ]
@@ -90,7 +90,7 @@ class Maudy(nn.Module):
             )
             # TODO: just a POC
             flux = pyro.deterministic("flux", get_vmax(kcat, enzyme_conc))
-            true_obs_flux = flux[self.obs_fluxes_idx[0]]
+            true_obs_flux = flux[self.obs_fluxes_idx]
             pyro.sample(
                 "y_flux_train",
                 dist.Normal(true_obs_flux * correction, self.obs_fluxes_std).to_event(1),
