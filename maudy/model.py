@@ -104,7 +104,7 @@ class Maudy(nn.Module):
             )
             correction_scale = kcat.new_ones(self.num_obs_fluxes)
             correction = pyro.sample(
-                "correction", dist.LogNormal(0, correction_scale).to_event(1)
+                "correction", dist.Normal(0, correction_scale).to_event(1)
             )
             # TODO: just a POC
             flux = pyro.deterministic("flux", get_vmax(kcat, enzyme_conc))
@@ -133,7 +133,7 @@ class Maudy(nn.Module):
             correction_loc, correction_scale = self.odecoder(enzyme_conc)
             pyro.sample(
                 "correction",
-                dist.LogNormal(correction_loc, correction_scale).to_event(1),
+                dist.Normal(correction_loc, correction_scale).to_event(1),
             )
             steady_state_dev = pyro.sample(
                 "steady_state_dev",

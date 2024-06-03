@@ -7,7 +7,7 @@ class ToyDecoder(nn.Module):
         super().__init__()
         self.fc = nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.Sigmoid())
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
                 for in_dim, out_dim in zip(dims[:-1], dims[1:])
             ]
         )
