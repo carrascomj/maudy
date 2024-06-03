@@ -121,7 +121,7 @@ class Maudy(nn.Module):
             drain = pyro.sample(
                 "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
             )
-            pyro.deterministic(
+            steady_state_dev = pyro.deterministic(
                 "steady_state_dev",
                 (torch.cat([drain, flux], dim=1) @ self.S.T)[:, self.balanced_mics_idx],
             )
@@ -134,6 +134,9 @@ class Maudy(nn.Module):
                     1
                 ),
                 obs=obs_fluxes,
+            )
+            pyro.factor(
+                "steady_state_loss", -steady_state_dev.abs().sum()
             )
 
     # The guide specifies the variational distribution
@@ -151,15 +154,6 @@ class Maudy(nn.Module):
             pyro.sample(
                 "correction",
                 dist.Normal(correction_loc, correction_scale).to_event(1),
-            )
-            steady_state_dev = pyro.sample(
-                "steady_state_dev",
-                dist.Normal(
-                    correction_loc.new_zeros(len(self.balanced_mics_idx)), 1e-11
-                ).to_event(1),
-            )
-            pyro.factor(
-                "steady_state_loss", steady_state_dev.abs().sum(), has_rsample=True
             )
 
     def print_inputs(self):
