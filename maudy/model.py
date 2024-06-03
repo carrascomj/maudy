@@ -117,6 +117,8 @@ class Maudy(nn.Module):
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
         self.S = torch.FloatTensor(S.values)
         self.S_enz = torch.FloatTensor(S.loc[:, ~S.columns.isin(drain.ids[1])].values)
+        mic_enz = S.loc[:, ~S.columns.isin(drain.ids[1])].index
+        self.met_to_mic = torch.LongTensor([mets.index(mic.split("_", 1)[0]) for mic in mic_enz])
         water = {
             reac.id: reac.water_stoichiometry for reac in self.kinetic_model.reactions
         }
@@ -191,7 +193,7 @@ class Maudy(nn.Module):
         )
         dgf = dgf.reshape(-1)
         dgr = pyro.deterministic(
-            "dgr", get_dgr(self.S_enz, dgf, self.water_stoichiometry)
+            "dgr", get_dgr(self.S_enz, dgf[self.met_to_mic], self.water_stoichiometry)
         )
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
