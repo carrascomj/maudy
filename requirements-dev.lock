@@ -157,6 +157,7 @@ torch==2.3.0
     # via pyro-ppl
 tqdm==4.66.4
     # via cmdstanpy
+    # via maudy
     # via pyro-ppl
 typer==0.12.3
     # via maudy

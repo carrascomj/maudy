@@ -10,7 +10,7 @@ import pyro
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
 from pyro.optim import ClippedAdam
-from typer import run
+from tqdm import tqdm
 from .model import Maudy
 from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
@@ -44,10 +44,11 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
 
-    for epoch in range(num_epochs):
+    progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
+    for _ in progress_bar:
         loss = svi.step(obs_fluxes, obs_conc)
-        print(f"[Epoch {epoch}]  Loss: {loss:.2e}")
-
+        progress_bar.set_postfix(loss=f"{loss:.2e}")
+    
     return maudy, optimizer
 
 
