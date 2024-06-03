@@ -64,7 +64,7 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
         if meas.target_type == MeasurementType.FLUX
     }
     mics_measurements = {
-        (exp.id, "{meas.metabolite}_{meas.compartment}"): meas.value
+        (exp.id, f"{meas.metabolite}_{meas.compartment}"): meas.value
         for exp in maudy.maud_params.experiments
         for meas in exp.measurements
         if meas.target_type == MeasurementType.MIC
