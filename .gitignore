@@ -8,3 +8,6 @@ wheels/
 
 # venv
 .venv
+
+# default output names of maudy
+maudyout_*

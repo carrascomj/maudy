@@ -69,7 +69,7 @@ def sample(
     out = (
         out_dir
         if out_dir is not None
-        else Path(f"{maud_input.config.name}_{get_timestamp()}")
+        else Path(f"maudyout_{maud_input.config.name}_{get_timestamp()}")
     )
     os.mkdir(out)
     torch.save(
