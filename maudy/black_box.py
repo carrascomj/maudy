@@ -20,4 +20,11 @@ class ToyDecoder(nn.Module):
 
     def forward(self, enz_conc) -> tuple[torch.Tensor, torch.Tensor]:
         out = self.fc(enz_conc)
-        return self.out_layer(out), self.fc_loc(out)
+        loc = self.out_layer(out)
+        scale = self.fc_loc(out)
+        
+        # Stabilization: clip the outputs to prevent extreme values
+        loc = torch.clamp(loc, -10, 10)  # Adjust the range as needed
+        scale = torch.clamp(scale, 1e-6, 10)  # Ensure scale is positive and within a reasonable range
+
+        return loc, scale

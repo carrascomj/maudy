@@ -104,16 +104,9 @@ def get_free_enzyme_ratio(
 
 
 def get_reversibility(
-    S: Matrix, dgr: Vector, conc: Vector, reactions: list[Reaction]
+    S: Matrix, dgr: Vector, conc: Vector
 ) -> Vector:
-    out = 1 - dgr + RT * S @ conc.log()
-    out[
-        [
-            i if reac.mechanism != ReactionMechanism.reversible_michaelis_menten else 1
-            for i, reac in enumerate(reactions)
-        ]
-    ] = 1
-    return out
+    return 1 - (dgr + RT * conc.log() @ S)
 
 
 def get_vmax(

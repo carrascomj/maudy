@@ -42,9 +42,10 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
         maudy.model,
         guide=guide,
         num_samples=num_epochs,
-        return_sites=("y_flux_train", "steady_state_dev"),
+        return_sites=("y_flux_train", "ssd"),
     )
     samples = predictive()
+    samples['steady_state_dev'] = samples['ssd'].squeeze(1)
     pred_summary = summary(samples)
     balanced_mics = [met.id for met in maudy.kinetic_model.mics if met.balanced]
     # assume obs_fluxes do not change across conditions

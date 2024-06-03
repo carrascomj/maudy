@@ -27,7 +27,7 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     if gpu:
         maudy = maudy.cuda()
 
-    obs_fluxes = maudy.get_obs_fluxes()
+    obs_fluxes, obs_conc = maudy.get_obs()
 
     # Setup an optimizer (Adam) and learning rate scheduler.
     # We start with a moderately high learning rate (0.006) and
@@ -45,7 +45,7 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     svi = SVI(maudy.model, guide, optimizer, elbo)
 
     for epoch in range(num_epochs):
-        loss = svi.step(obs_fluxes)
+        loss = svi.step(obs_fluxes, obs_conc)
         print(f"[Epoch {epoch}]  Loss: {loss:.2e}")
 
     return maudy, optimizer
