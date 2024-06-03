@@ -56,8 +56,18 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
         ]
         for exp in maudy.maud_params.experiments
     ][0]
-    flux_measurements = {(exp.id, meas.reaction): meas.value for exp in maudy.maud_params.experiments for meas in exp.measurements if meas.target_type == MeasurementType.FLUX}
-    mics_measurements = {(exp.id, "{meas.metabolite}_{meas.compartment}"): meas.value for exp in maudy.maud_params.experiments for meas in exp.measurements if meas.target_type == MeasurementType.MIC}
+    flux_measurements = {
+        (exp.id, meas.reaction): meas.value
+        for exp in maudy.maud_params.experiments
+        for meas in exp.measurements
+        if meas.target_type == MeasurementType.FLUX
+    }
+    mics_measurements = {
+        (exp.id, "{meas.metabolite}_{meas.compartment}"): meas.value
+        for exp in maudy.maud_params.experiments
+        for meas in exp.measurements
+        if meas.target_type == MeasurementType.MIC
+    }
     ssds: list[pd.DataFrame] = []
     y_flux_trains: list[pd.DataFrame] = []
     for i, experiment in enumerate(maudy.experiments):
@@ -76,8 +86,18 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
 
     ssd = pd.concat(ssds)
     y_flux_train = pd.concat(y_flux_trains)
-    y_flux_train["measurement"] = y_flux_train.apply(lambda x: flux_measurements[(x["experiment"], x.name)] if (x["experiment"], x.name) in flux_measurements else None, axis=1)
-    ssd["measurement"] = ssd.apply(lambda x: mics_measurements[(x["experiment"], x.name)] if (x["experiment"], x.name) in mics_measurements else None, axis=1)
+    y_flux_train["measurement"] = y_flux_train.apply(
+        lambda x: flux_measurements[(x["experiment"], x.name)]
+        if (x["experiment"], x.name) in flux_measurements
+        else None,
+        axis=1,
+    )
+    ssd["measurement"] = ssd.apply(
+        lambda x: mics_measurements[(x["experiment"], x.name)]
+        if (x["experiment"], x.name) in mics_measurements
+        else None,
+        axis=1,
+    )
     return y_flux_train, ssd
 
 

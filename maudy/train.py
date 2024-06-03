@@ -55,15 +55,25 @@ def get_timestamp():
     return datetime.now().isoformat().replace(":", "").replace("-", "").replace(".", "")
 
 
-def sample(maud_dir: Path, num_epochs: int = 100, out_dir: Optional[Path] = None, smoke: bool = False):
-    """Train model."""
+def sample(
+    maud_dir: Path,
+    num_epochs: int = 100,
+    out_dir: Optional[Path] = None,
+    smoke: bool = False,
+):
+    """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
     maudy, optimizer = train(maud_input, num_epochs)
     if smoke:
         return
-    out = out_dir if out_dir is not None else Path(f"{maud_input.config.name}_{get_timestamp()}")
+    out = (
+        out_dir
+        if out_dir is not None
+        else Path(f"{maud_input.config.name}_{get_timestamp()}")
+    )
     os.mkdir(out)
     torch.save(
-        {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()}, out / "model.pt"
+        {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()},
+        out / "model.pt",
     )
     shutil.copytree(maud_dir, out / "user_input")
