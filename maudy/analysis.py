@@ -42,9 +42,10 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
         maudy.model,
         guide=guide,
         num_samples=num_epochs,
-        return_sites=("y_flux_train", "ssd"),
+        return_sites=("y_flux_train", "bal_conc", "ssd"),
     )
     samples = predictive()
+    print(list(samples.keys()))
     samples["steady_state_dev"] = samples["ssd"].squeeze(1)
     pred_summary = summary(samples)
     balanced_mics = [met.id for met in maudy.kinetic_model.mics if met.balanced]
@@ -71,22 +72,30 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
     }
     ssds: list[pd.DataFrame] = []
     y_flux_trains: list[pd.DataFrame] = []
+    concs: list[pd.DataFrame] = []
     for i, experiment in enumerate(maudy.experiments):
         ssd = {}
         y_flux_train = {}
+        conc = {}
         for key, items in pred_summary["steady_state_dev"].items():
             ssd[key] = items[i, :]
         for key, items in pred_summary["y_flux_train"].items():
             y_flux_train[key] = items[i]
+        for key, items in pred_summary["bal_conc"].items():
+            conc[key] = items[i]
         ssd = pd.DataFrame(ssd, index=balanced_mics)
         ssd["experiment"] = experiment
         ssds.append(ssd)
         y_flux_train = pd.DataFrame(y_flux_train, index=obs_fluxes)
         y_flux_train["experiment"] = experiment
         y_flux_trains.append(y_flux_train)
+        conc = pd.DataFrame(conc, index=balanced_mics)
+        conc["experiment"] = experiment
+        concs.append(conc)
 
     ssd = pd.concat(ssds)
     y_flux_train = pd.concat(y_flux_trains)
+    conc = pd.concat(concs)
     y_flux_train["measurement"] = y_flux_train.apply(
         lambda x: flux_measurements[(x["experiment"], x.name)]
         if (x["experiment"], x.name) in flux_measurements
@@ -99,13 +108,21 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
         else None,
         axis=1,
     )
-    return y_flux_train, ssd
+    conc["measurement"] = conc.apply(
+        lambda x: mics_measurements[(x["experiment"], x.name)]
+        if (x["experiment"], x.name) in mics_measurements
+        else None,
+        axis=1,
+    )
+    return y_flux_train, ssd, conc
 
 
 def ppc(model_output: Path, num_epochs: int = 800):
     maudy, _ = load(model_output)
-    y_flux_train, ssd = predict(maudy, num_epochs)
+    y_flux_train, ssd, conc = predict(maudy, num_epochs)
     print("### Measured fluxes ###")
     print(y_flux_train)
     print("### Steady state dev ###")
     print(ssd)
+    print("### [M] ###")
+    print(conc)

@@ -301,6 +301,7 @@ class Maudy(nn.Module):
                 "unb_conc",
                 dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
             )
+            # FIXME(carrascomj): this may be wrong, are we generating samples for each condition
             bal_conc = pyro.sample(
                 "bal_conc",
                 dist.LogNormal(self.bal_conc_loc, self.bal_conc_scale).to_event(1),
