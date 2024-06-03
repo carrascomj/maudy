@@ -20,7 +20,9 @@ build-backend = "hatchling.build"
 
 [tool.rye]
 managed = true
-dev-dependencies = []
+dev-dependencies = [
+    "ruff>=0.4.7",
+]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -32,4 +34,4 @@ include = ["maudy"]
 packages = ["maudy"]
 
 [project.scripts]
-maudy = "maudy.train:main"
+maudy = "maudy.cli:main"

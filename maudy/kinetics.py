@@ -77,7 +77,7 @@ def get_reversibility(
 def get_vmax(
     kcat: Vector, enzyme_conc: Vector# , reactions: list[Reaction],
 ) -> Vector:
-    return (enzyme_conc * kcat).T
+    return (enzyme_conc * kcat)
     # return kcat * enzyme_conc[[get_enzyme_idx(reac.id) for reac in reactions]]
 
 

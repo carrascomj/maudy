@@ -1,9 +1,15 @@
 """Training loop and CLI."""
 
+import os
+import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
 import pyro
+import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
 from pyro.optim import ClippedAdam
-from pathlib import Path
 from typer import run
 from .model import Maudy
 from maud.loading_maud_inputs import load_maud_input
@@ -21,11 +27,12 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     if gpu:
         maudy = maudy.cuda()
 
+    obs_fluxes = maudy.get_obs_fluxes()
+
     # Setup an optimizer (Adam) and learning rate scheduler.
     # We start with a moderately high learning rate (0.006) and
     # reduce by a factor of 5 after 20 epochs.
-    scheduler = ClippedAdam({"lr": 0.006, "lrd": 0.2 ** (1 / num_epochs)})
-
+    optimizer = ClippedAdam({"lr": 0.006, "lrd": 0.2 ** (1 / num_epochs)})
 
     # Tell Pyro to enumerate out y when y is unobserved.
     # (By default y would be sampled from the guide)
@@ -35,19 +42,26 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     # Note we use TraceEnum_ELBO in order to leverage Pyro's machinery
     # for automatic enumeration of the discrete latent variable y.
     elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
-    svi = SVI(maudy.model, guide, scheduler, elbo)
+    svi = SVI(maudy.model, guide, optimizer, elbo)
 
     for epoch in range(num_epochs):
-        loss = svi.step()
-        # scheduler.step()
+        loss = svi.step(obs_fluxes)
         print(f"[Epoch {epoch}]  Loss: {loss:.2e}")
 
+    return maudy, optimizer
 
-def app(maud_dir: Path, num_epochs: int = 100):
+
+def get_timestamp():
+    return datetime.now().isoformat().replace(":", "").replace("-", "").replace(".", "")
+
+
+def sample(maud_dir: Path, num_epochs: int = 100, out_dir: Optional[Path] = None):
     """Train model."""
     maud_input = load_maud_input(str(maud_dir))
-    train(maud_input, num_epochs)
-
-
-def main():
-    run(app)
+    maudy, optimizer = train(maud_input, num_epochs)
+    out = out_dir if out_dir is not None else Path(f"{maud_input.config.name}_{get_timestamp()}")
+    os.mkdir(out)
+    torch.save(
+        {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()}, out / "model.pt"
+    )
+    shutil.copytree(maud_dir, out / "user_input")

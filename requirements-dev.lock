@@ -134,6 +134,7 @@ pytz==2024.1
     # via pandas
 rich==13.7.1
     # via typer
+ruff==0.4.7
 scipy==1.13.1
     # via arviz
     # via maud-metabolic-models

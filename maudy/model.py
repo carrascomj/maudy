@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 import pyro
 import pyro.distributions as dist
@@ -80,7 +82,7 @@ class Maudy(nn.Module):
         # Setup the various neural networks used in the model and guide
         self.odecoder = ToyDecoder(dims=[num_fluxes, 256, 256, self.num_obs_fluxes])
 
-    def model(self):
+    def model(self, obs_fluxes: Optional[torch.FloatTensor] = None):
         # Register various nn.Modules (neural networks) with Pyro
         pyro.module("maudy", self)
 
@@ -99,15 +101,18 @@ class Maudy(nn.Module):
             # TODO: just a POC
             flux = pyro.deterministic("flux", get_vmax(kcat, enzyme_conc))
             true_obs_flux = flux[self.obs_fluxes_idx]
-            pyro.deterministic("steady_state_dev", (flux.T @ self.S.T)[:, self.balanced_mics_idx])
+            pyro.deterministic("steady_state_dev", (flux @ self.S.T)[:, self.balanced_mics_idx])
+            # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
+            if true_obs_flux.ndim == 1:
+                true_obs_flux = true_obs_flux.unsqueeze(-1)
             pyro.sample(
                 "y_flux_train",
                 dist.Normal(true_obs_flux * correction, self.obs_fluxes_std).to_event(1),
-                obs=self.obs_fluxes,
+                obs=obs_fluxes,
             )
 
     # The guide specifies the variational distribution
-    def guide(self):
+    def guide(self, obs_fluxes: Optional[torch.FloatTensor] = None):
         pyro.module("maudy", self)
         with pyro.plate("experiment", size=len(self.experiments), dim=-1):
             enzyme_conc = pyro.sample(
@@ -133,3 +138,6 @@ class Maudy(nn.Module):
             f"Kcats: {self.kcat_loc};{self.kcat_scale}\n"
             f"Fluxes: {self.obs_fluxes};{self.obs_fluxes_std};{self.obs_fluxes_idx}"
         )
+
+    def get_obs_fluxes(self):
+        return self.obs_fluxes
