@@ -9,7 +9,13 @@ import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from .black_box import ToyDecoder
-from .kinetics import get_dgr, get_reversibility, get_vmax
+from .kinetics import (
+    get_dgr,
+    get_free_enzyme_ratio,
+    get_reversibility,
+    get_saturation,
+    get_vmax,
+)
 
 
 class Maudy(nn.Module):
@@ -30,12 +36,12 @@ class Maudy(nn.Module):
             index=enzymatic_reactions,
         )
         reactions = [reac.id for reac in self.kinetic_model.reactions]
-        self.kcat_loc = torch.Tensor([
-            kcats.loc[reac, "location"] for reac in enzymatic_reactions
-        ])
-        self.kcat_scale = torch.Tensor([
-            kcats.loc[reac, "scale"] for reac in enzymatic_reactions
-        ])
+        self.kcat_loc = torch.Tensor(
+            [kcats.loc[reac, "location"] for reac in enzymatic_reactions]
+        )
+        self.kcat_scale = torch.Tensor(
+            [kcats.loc[reac, "scale"] for reac in enzymatic_reactions]
+        )
         # 2. enzyme concentrations
         ec = self.maud_params.conc_enzyme_train.prior
         enzyme_concs = pd.DataFrame(ec.location, index=ec.ids[0], columns=ec.ids[1])
@@ -70,12 +76,12 @@ class Maudy(nn.Module):
             f"{e}_{r}" for e, r in zip(enzymes, enzymatic_reactions)
         ]
         unb_conc = self.maud_params.conc_unbalanced_train.prior
-        self.balanced_mics_idx = torch.LongTensor([
-            i for i, met in enumerate(self.kinetic_model.mics) if met.balanced
-        ])
-        self.unbalanced_mics_idx = torch.LongTensor([
-            i for i, met in enumerate(self.kinetic_model.mics) if not met.balanced
-        ])
+        self.balanced_mics_idx = torch.LongTensor(
+            [i for i, met in enumerate(self.kinetic_model.mics) if met.balanced]
+        )
+        self.unbalanced_mics_idx = torch.LongTensor(
+            [i for i, met in enumerate(self.kinetic_model.mics) if not met.balanced]
+        )
         unb_mics = [mic for i, mic in enumerate(mics) if i in self.unbalanced_mics_idx]
         bal_mics = [mic for i, mic in enumerate(mics) if i in self.balanced_mics_idx]
         self.unb_conc_loc = torch.FloatTensor(
@@ -91,7 +97,10 @@ class Maudy(nn.Module):
             .values
         )
         conc_obs = {
-            (exp.id, f"{meas.metabolite}_{meas.compartment}"): (meas.value, meas.error_scale)
+            (exp.id, f"{meas.metabolite}_{meas.compartment}"): (
+                meas.value,
+                meas.error_scale,
+            )
             for exp in self.maud_params.experiments
             for meas in exp.measurements
             if meas.target_type == MeasurementType.MIC
@@ -100,77 +109,155 @@ class Maudy(nn.Module):
         for exp in self.maud_params.experiments:
             for meas in exp.initial_state:
                 conc_inits[(exp.id, meas.target_id)] = (meas.value, 1.0)
-        self.bal_conc_loc = torch.FloatTensor([
+        self.bal_conc_loc = torch.FloatTensor(
             [
-                conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
-                for mic in bal_mics
+                [
+                    conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
+                    for mic in bal_mics
+                ]
+                for exp in self.experiments
             ]
-            for exp in self.experiments
-        ]).log()
-        self.bal_conc_scale = torch.FloatTensor([
+        ).log()
+        self.bal_conc_scale = torch.FloatTensor(
             [
-                conc_inits[(exp, mic)][1] if (exp, mic) in conc_inits else 1.0
-                for mic in bal_mics
+                [
+                    conc_inits[(exp, mic)][1] if (exp, mic) in conc_inits else 1.0
+                    for mic in bal_mics
+                ]
+                for exp in self.experiments
             ]
-            for exp in self.experiments
-        ])
+        )
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
         self.S = torch.FloatTensor(S.values)
         self.S_enz = torch.FloatTensor(S.loc[:, ~S.columns.isin(drain.ids[1])].values)
         mic_enz = S.loc[:, ~S.columns.isin(drain.ids[1])].index
-        self.met_to_mic = torch.LongTensor([mets.index(mic.split("_", 1)[0]) for mic in mic_enz])
+        self.met_to_mic = torch.LongTensor(
+            [mets.index(mic.split("_", 1)[0]) for mic in mic_enz]
+        )
         water = {
             reac.id: reac.water_stoichiometry for reac in self.kinetic_model.reactions
         }
-        self.water_stoichiometry = torch.FloatTensor([
-            water[r] for r in enzymatic_reactions
-        ])
+        self.water_stoichiometry = torch.FloatTensor(
+            [water[r] for r in enzymatic_reactions]
+        )
+        # 5. saturation, we need kms and indices
+        reac_st = {reac.id: reac.stoichiometry for reac in self.kinetic_model.reactions}
+        self.sub_conc_idx = [
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st < 0]
+            )
+            for reac in enzymatic_reactions
+        ]
+        self.prod_conc_idx = [
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st > 0]
+            )
+            for reac in enzymatic_reactions
+        ]
+        self.substrate_S = [
+            torch.LongTensor([-st for _, st in reac_st[reac].items() if st < 0])
+            for reac in enzymatic_reactions
+        ]
+        self.product_S = [
+            torch.LongTensor([st for _, st in reac_st[reac].items() if st > 0])
+            for reac in enzymatic_reactions
+        ]
+        # the kms
+        kms = self.maud_params.km.prior
+        km_map = {}
+        for i, km_id in enumerate(kms.ids[0]):
+            enzyme, mic = km_id.split("_", 1)
+            km_map[(enzyme, mic)] = i
+        self.km_loc = torch.FloatTensor(kms.location)
+        self.km_scale = torch.FloatTensor(kms.scale)
+        self.sub_km_idx = [
+            torch.LongTensor(
+                [km_map[(enz, met)] for met, st in reac_st[reac].items() if st < 0]
+            )
+            for enz, reac in zip(enzymes, enzymatic_reactions)
+        ]
+        # if the enz, mic is not in km_map, it is a irreversible reaction
+        self.prod_km_idx = [
+            torch.LongTensor(
+                [
+                    km_map[(enz, met)]
+                    for met, st in reac_st[reac].items()
+                    if st > 0 and (enz, met) in km_map
+                ]
+            )
+            for enz, reac in zip(enzymes, enzymatic_reactions)
+        ]
+        # verify that the indices are at least injective
+        all_sub_idx = [
+            conc_idx for reac_idx in self.sub_km_idx for conc_idx in reac_idx
+        ]
+        all_prod_idx = [
+            conc_idx for reac_idx in self.prod_km_idx for conc_idx in reac_idx
+        ]
+        assert len(all_sub_idx) == len(
+            set(all_sub_idx)
+        ), "The indexing on the Km values went wrong for the substrates"
+        assert len(all_prod_idx) == len(
+            set(all_prod_idx)
+        ), "The indexing on the Km values went wrong for the products"
 
-        self.obs_fluxes = torch.FloatTensor([
+        self.obs_fluxes = torch.FloatTensor(
             [
-                meas.value
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.FLUX
+                [
+                    meas.value
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.FLUX
+                ]
+                for exp in self.maud_params.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
-        self.obs_fluxes_std = torch.FloatTensor([
+        )
+        self.obs_fluxes_std = torch.FloatTensor(
             [
-                meas.error_scale
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.FLUX
+                [
+                    meas.error_scale
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.FLUX
+                ]
+                for exp in self.maud_params.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
-        self.obs_conc = torch.FloatTensor([
-            [conc_obs[(e, mic)][0] for mic in bal_mics if (e, mic) in conc_obs]
-            for e in self.experiments
-        ])
-        self.obs_conc_std = torch.FloatTensor([
-            [conc_obs[(e, mic)][1] for mic in bal_mics if (e, mic) in conc_obs]
-            for e in self.experiments
-        ])
-        idx = torch.LongTensor([
+        )
+        self.obs_conc = torch.FloatTensor(
             [
-                enzymatic_reactions.index(meas.reaction)
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.FLUX
+                [conc_obs[(e, mic)][0] for mic in bal_mics if (e, mic) in conc_obs]
+                for e in self.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
+        )
+        self.obs_conc_std = torch.FloatTensor(
+            [
+                [conc_obs[(e, mic)][1] for mic in bal_mics if (e, mic) in conc_obs]
+                for e in self.experiments
+            ]
+        )
+        idx = torch.LongTensor(
+            [
+                [
+                    enzymatic_reactions.index(meas.reaction)
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.FLUX
+                ]
+                for exp in self.maud_params.experiments
+            ]
+        )
         self.num_obs_fluxes = len(idx[0])
         self.obs_fluxes_idx = (
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
-        idx = torch.LongTensor([
+        idx = torch.LongTensor(
             [
-                bal_mics.index(f"{meas.metabolite}_{meas.compartment}")
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.MIC
+                [
+                    bal_mics.index(f"{meas.metabolite}_{meas.compartment}")
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.MIC
+                ]
+                for exp in self.maud_params.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
+        )
         self.obs_conc_idx = (
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
@@ -180,11 +267,16 @@ class Maudy(nn.Module):
             dims=[len(self.unbalanced_mics_idx), 256, 256, len(self.balanced_mics_idx)]
         )
 
-    def model(self, obs_fluxes: Optional[torch.FloatTensor] = None, obs_conc: Optional[torch.FloatTensor] = None):
+    def model(
+        self,
+        obs_fluxes: Optional[torch.FloatTensor] = None,
+        obs_conc: Optional[torch.FloatTensor] = None,
+    ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
         pyro.module("maudy", self)
 
+        # experiment-indepedent variables
         kcat = pyro.sample(
             "kcat", dist.LogNormal(self.kcat_loc, self.kcat_scale).to_event(1)
         )
@@ -195,6 +287,8 @@ class Maudy(nn.Module):
         dgr = pyro.deterministic(
             "dgr", get_dgr(self.S_enz, dgf[self.met_to_mic], self.water_stoichiometry)
         )
+        km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
+
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
             enzyme_conc = pyro.sample(
@@ -203,7 +297,6 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            # TODO: bal_conc_loc and bal_conc_scale must come from the NN in the guide
             unb_conc = pyro.sample(
                 "unb_conc",
                 dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
@@ -219,12 +312,28 @@ class Maudy(nn.Module):
                 "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
             )
 
+        free_enzyme_ratio = pyro.deterministic(
+            "free_enzyme_ratio",
+            get_free_enzyme_ratio(
+                conc,
+                km,
+                self.sub_conc_idx,
+                self.sub_km_idx,
+                self.prod_conc_idx,
+                self.prod_km_idx,
+                self.substrate_S,
+                self.product_S,
+            ),
+        )
         flux = pyro.deterministic(
             "flux",
-            get_vmax(kcat, enzyme_conc) * get_reversibility(self.S_enz, dgr, conc),
+            get_vmax(kcat, enzyme_conc)
+            * get_reversibility(self.S_enz, dgr, conc)
+            * get_saturation(
+                conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
+            ),
         )
         # Monitoring for debugging
-        # print(f"conc: {conc.detach().cpu().numpy()}")
         true_obs_flux = flux[self.obs_fluxes_idx]
         true_obs_conc = bal_conc[self.obs_conc_idx]
         # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
@@ -235,7 +344,9 @@ class Maudy(nn.Module):
         if true_obs_conc.ndim == 1:
             true_obs_conc = true_obs_conc.unsqueeze(-1)
 
-        ssd = pyro.deterministic("ssd", torch.cat([drain, flux], dim=1) @ self.S.T[:, self.balanced_mics_idx])
+        ssd = pyro.deterministic(
+            "ssd", torch.cat([drain, flux], dim=1) @ self.S.T[:, self.balanced_mics_idx]
+        )
         with exp_plate:
             pyro.sample(
                 "y_flux_train",
@@ -251,17 +362,22 @@ class Maudy(nn.Module):
             pyro.sample(
                 "steady_state_dev",
                 dist.Normal(ssd, self.bal_conc_scale / 1e6).to_event(1),
-                obs=torch.zeros((len(self.experiments), len(self.balanced_mics_idx)))
+                obs=torch.zeros((len(self.experiments), len(self.balanced_mics_idx))),
             )
 
     # The guide specifies the variational distribution
-    def guide(self, obs_fluxes: Optional[torch.FloatTensor] = None, obs_conc: Optional[torch.FloatTensor] = None):
+    def guide(
+        self,
+        obs_fluxes: Optional[torch.FloatTensor] = None,
+        obs_conc: Optional[torch.FloatTensor] = None,
+    ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
         pyro.sample(
             "dgf", dist.MultivariateNormal(self.dgf_means, scale_tril=self.dgf_cov)
         )
         pyro.sample("kcat", dist.LogNormal(self.kcat_loc, self.kcat_scale).to_event(1))
+        pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
         with pyro.plate("experiment", size=len(self.experiments), dim=-1):
             pyro.sample(
                 "enzyme_conc",

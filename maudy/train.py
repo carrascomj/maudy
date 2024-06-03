@@ -48,7 +48,7 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     for _ in progress_bar:
         loss = svi.step(obs_fluxes, obs_conc)
         progress_bar.set_postfix(loss=f"{loss:.2e}")
-    
+
     return maudy, optimizer
 
 
