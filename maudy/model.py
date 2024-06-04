@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import ToyDecoder
+from .black_box import Encoder, Decoder
 from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio,
@@ -263,9 +263,36 @@ class Maudy(nn.Module):
             [i for exp in idx for i in exp],
         )
         # Setup the various neural networks used in the model and guide
-        # FIXME(carrascomj): make a real decoder
-        self.odecoder = ToyDecoder(
-            dims=[len(self.unbalanced_mics_idx), 256, 256, len(self.balanced_mics_idx)]
+        self.odecoder = Decoder(
+            met_dims=[
+                len(self.unbalanced_mics_idx),
+                256,
+                256,
+                len(self.balanced_mics_idx),
+            ],
+            reac_dims=[len(enzymatic_reactions), 256, 256, len(enzymatic_reactions)],
+            drain_dims=[self.drain_mean.shape[1], 256, 256, self.drain_mean.shape[1]],
+            S=self.S if self.drain_mean.shape[1] else self.S_enz,
+            reac_features=2,
+        )
+        self.oencoder = Encoder(
+            reac_dims=[
+                len(reactions)
+                if self.drain_mean.shape[1]
+                else len(enzymatic_reactions),
+                256,
+                256,
+                len(reactions)
+                if self.drain_mean.shape[1]
+                else len(enzymatic_reactions),
+            ],
+            S=self.S if self.drain_mean.shape[1] else self.S_enz,
+            met_dims=[
+                len(mics),
+                256,
+                256,
+                len(self.balanced_mics_idx),
+            ],
         )
 
     def model(
@@ -302,16 +329,23 @@ class Maudy(nn.Module):
                 "unb_conc",
                 dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
             )
+            drain = (
+                pyro.sample(
+                    "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
+                )
+                if self.drain_mean.shape[1]
+                else None
+            )
+            bal_conc_loc, bal_conc_scale = self.odecoder(
+                unb_conc, dgr.squeeze(0), enzyme_conc, self.balanced_mics_idx, drain
+            )
             bal_conc = pyro.sample(
                 "bal_conc",
-                dist.LogNormal(self.bal_conc_loc, self.bal_conc_scale).to_event(1),
+                dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
             )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
-            drain = pyro.sample(
-                "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
-            )
 
         free_enzyme_ratio = pyro.deterministic(
             "free_enzyme_ratio",
@@ -333,8 +367,7 @@ class Maudy(nn.Module):
             * get_saturation(
                 conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
             ),
-        )
-        # Monitoring for debugging
+        ).reshape(len(self.experiments), -1)
         true_obs_flux = flux[self.obs_fluxes_idx]
         true_obs_conc = bal_conc[self.obs_conc_idx]
         # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
@@ -345,9 +378,8 @@ class Maudy(nn.Module):
         if true_obs_conc.ndim == 1:
             true_obs_conc = true_obs_conc.unsqueeze(-1)
 
-        ssd = pyro.deterministic(
-            "ssd", torch.cat([drain, flux], dim=1) @ self.S.T[:, self.balanced_mics_idx]
-        )
+        all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
+        ssd = pyro.deterministic("ssd", all_flux @ self.S.T[:, self.balanced_mics_idx])
         with exp_plate:
             pyro.sample(
                 "y_flux_train",
@@ -362,7 +394,7 @@ class Maudy(nn.Module):
             # steady state penalization
             pyro.sample(
                 "steady_state_dev",
-                dist.Normal(ssd, self.bal_conc_scale / 1e6).to_event(1),
+                dist.Normal(ssd, self.bal_conc_loc.exp() / 10).to_event(1),
                 obs=torch.zeros((len(self.experiments), len(self.balanced_mics_idx))),
             )
 
@@ -374,13 +406,19 @@ class Maudy(nn.Module):
     ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
-        pyro.sample(
+        dgf = pyro.sample(
             "dgf", dist.MultivariateNormal(self.dgf_means, scale_tril=self.dgf_cov)
         )
-        pyro.sample("kcat", dist.LogNormal(self.kcat_loc, self.kcat_scale).to_event(1))
-        pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
-        with pyro.plate("experiment", size=len(self.experiments), dim=-1):
-            pyro.sample(
+        dgr = pyro.deterministic(
+            "dgr", get_dgr(self.S_enz, dgf[self.met_to_mic], self.water_stoichiometry)
+        )
+        kcat = pyro.sample(
+            "kcat", dist.LogNormal(self.kcat_loc, self.kcat_scale).to_event(1)
+        )
+        km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
+        exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
+        with exp_plate:
+            enzyme_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(self.enzyme_concs_loc, self.enzyme_concs_scale).to_event(
                     1
@@ -390,12 +428,45 @@ class Maudy(nn.Module):
                 "unb_conc",
                 dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
             )
-            bal_conc_loc, bal_conc_scale = self.odecoder(unb_conc)
-            pyro.sample(
-                "bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
+            conc = kcat.new_ones(len(self.experiments), self.num_mics)
+            conc[:, self.balanced_mics_idx] = torch.exp(self.bal_conc_loc)
+            conc[:, self.unbalanced_mics_idx] = unb_conc
+
+            drain = (
+                pyro.sample(
+                    "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
+                )
+                if self.drain_mean.shape[1]
+                else None
             )
+        # print(f"{conc=}")
+        flux = pyro.deterministic(
+            "flux",
+            get_vmax(kcat, enzyme_conc)
+            * get_reversibility(self.S_enz, dgr, conc)
+            * get_saturation(
+                conc,
+                km,
+                get_free_enzyme_ratio(
+                    conc,
+                    km,
+                    self.sub_conc_idx,
+                    self.sub_km_idx,
+                    self.prod_conc_idx,
+                    self.prod_km_idx,
+                    self.substrate_S,
+                    self.product_S,
+                ),
+                self.sub_conc_idx,
+                self.sub_km_idx,
+            ),
+        )
+        all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
+        with exp_plate:
+            bal_conc_loc = self.oencoder(all_flux)
             pyro.sample(
-                "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
+                "bal_conc",
+                dist.LogNormal(bal_conc_loc, self.bal_conc_scale).to_event(1),
             )
 
     def print_inputs(self):
