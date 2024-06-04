@@ -1,6 +1,7 @@
 """Analyse the output of a model."""
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import torch
@@ -35,17 +36,9 @@ def summary(samples):
     return site_stats
 
 
-def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
-    """Run posterior predictive check."""
-    guide = config_enumerate(maudy.guide, "parallel", expand=True)
-    predictive = Predictive(
-        maudy.model,
-        guide=guide,
-        num_samples=num_epochs,
-        return_sites=("y_flux_train", "bal_conc", "ssd"),
-    )
-    samples = predictive()
-    print(list(samples.keys()))
+def report_to_dfs(
+    maudy: Maudy, samples: dict[Any, torch.Tensor]
+) -> tuple[pd.DataFrame, ...]:
     samples["steady_state_dev"] = samples["ssd"].squeeze(1)
     pred_summary = summary(samples)
     balanced_mics = [met.id for met in maudy.kinetic_model.mics if met.balanced]
@@ -117,9 +110,21 @@ def predict(maudy: Maudy, num_epochs: int) -> tuple[pd.DataFrame, ...]:
     return y_flux_train, ssd, conc
 
 
+def predict(maudy: Maudy, num_epochs: int) -> dict[Any, torch.Tensor]:
+    """Run posterior predictive check."""
+    guide = config_enumerate(maudy.guide, "parallel", expand=True)
+    return Predictive(
+        maudy.model,
+        guide=guide,
+        num_samples=num_epochs,
+        return_sites=("y_flux_train", "bal_conc", "ssd"),
+    )()
+
+
 def ppc(model_output: Path, num_epochs: int = 800):
     maudy, _ = load(model_output)
-    y_flux_train, ssd, conc = predict(maudy, num_epochs)
+    samples = predict(maudy, num_epochs)
+    y_flux_train, ssd, conc = report_to_dfs(maudy, samples)
     print("### Measured fluxes ###")
     print(y_flux_train)
     print("### Steady state dev ###")
