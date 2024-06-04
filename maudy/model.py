@@ -263,6 +263,7 @@ class Maudy(nn.Module):
             [i for exp in idx for i in exp],
         )
         # Setup the various neural networks used in the model and guide
+        # FIXME(carrascomj): make a real decoder
         self.odecoder = ToyDecoder(
             dims=[len(self.unbalanced_mics_idx), 256, 256, len(self.balanced_mics_idx)]
         )
@@ -301,7 +302,6 @@ class Maudy(nn.Module):
                 "unb_conc",
                 dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
             )
-            # FIXME(carrascomj): this may be wrong, are we generating samples for each condition
             bal_conc = pyro.sample(
                 "bal_conc",
                 dist.LogNormal(self.bal_conc_loc, self.bal_conc_scale).to_event(1),

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-# Used in parameterizing p(flux | enz_conc)
+# Used in parameterizing p(bal_conc | unb_conc)
 class ToyDecoder(nn.Module):
     def __init__(self, dims: list[int]):
         super().__init__()
@@ -26,9 +26,9 @@ class ToyDecoder(nn.Module):
         scale = self.fc_loc(out)
 
         # Stabilization: clip the outputs to prevent extreme values
-        loc = torch.clamp(loc, -10, 10)  # Adjust the range as needed
+        loc = torch.clamp(loc, -25, 25)
         scale = torch.clamp(
-            scale, 1e-6, 10
+            scale, 0.1, 3.0
         )  # Ensure scale is positive and within a reasonable range
 
         return loc, scale
