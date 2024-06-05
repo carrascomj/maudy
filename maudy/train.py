@@ -16,14 +16,14 @@ from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
 
 
-def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
+def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool = False):
     pyro.clear_param_store()
     # Enable optional validation warnings
     pyro.enable_validation(True)
 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input)
-    maudy.print_inputs()
+    # maudy.print_inputs()
     if gpu:
         maudy = maudy.cuda()
 
@@ -32,8 +32,7 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
     # Setup an optimizer (Adam) and learning rate scheduler.
     # We start with a moderately high learning rate (0.006) and
     # reduce by a factor of 5 after 20 epochs.
-    optimizer = ClippedAdam({"lr": 0.006, "lrd": 0.2 ** (1 / num_epochs)})
-
+    optimizer = ClippedAdam({"lr": 1e-6, "lrd": 0.2 ** (1 / num_epochs)})
     # Tell Pyro to enumerate out y when y is unobserved.
     # (By default y would be sampled from the guide)
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
@@ -46,7 +45,7 @@ def train(maud_input: MaudInput, num_epochs: int, gpu: bool = False):
 
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
     for _ in progress_bar:
-        loss = svi.step(obs_fluxes, obs_conc)
+        loss = svi.step(obs_fluxes, obs_conc, penalize_ss)
         progress_bar.set_postfix(loss=f"{loss:.2e}")
 
     return maudy, optimizer
@@ -60,11 +59,12 @@ def sample(
     maud_dir: Path,
     num_epochs: int = 100,
     out_dir: Optional[Path] = None,
+    penalize_ss: bool = True,
     smoke: bool = False,
 ):
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
-    maudy, optimizer = train(maud_input, num_epochs)
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss=penalize_ss)
     if smoke:
         return
     out = (

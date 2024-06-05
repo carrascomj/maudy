@@ -13,29 +13,23 @@ class Decoder(nn.Module):
         reac_features: int,
     ):
         super().__init__()
-        self.met_backbone = nn.Sequential(
-            *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-            ]
-        )
-        self.reac_backbone = nn.Sequential(
-            *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
-            ]
-        )
+        self.met_backbone = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+        ])
+        self.reac_backbone = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+            for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
+        ])
         # before passing it to the reac_backbone, we need to perform a convolution
         # over the reaction features (dgr, enz_conc, etc.) to a single feature
         self.reac_conv = nn.Sequential(nn.Conv1d(reac_features, 1, 1), nn.ReLU())
 
         self.drain_backbone = (
-            nn.Sequential(
-                *[
-                    nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                    for in_dim, out_dim in zip(drain_dims[:-1], drain_dims[1:])
-                ]
-            )
+            nn.Sequential(*[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(drain_dims[:-1], drain_dims[1:])
+            ])
             if drain_dims[0]
             else None
         )
@@ -68,7 +62,7 @@ class Decoder(nn.Module):
         if drains is not None:
             assert self.drain_backbone is not None
             drain_out = self.drain_backbone(drains)
-            reac_out = torch.cat([drain_out, reac_out])
+            reac_out = torch.cat([drain_out, reac_out], dim=-1)
         reac_out = (reac_out @ self.S.T)[..., balanced_mics_idx]
         out = out + reac_out
 
@@ -86,19 +80,15 @@ class Encoder(nn.Module):
         S: torch.Tensor,
     ):
         super().__init__()
-        self.reac_backbone = nn.Sequential(
-            *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
-            ]
-        )
+        self.reac_backbone = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+            for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
+        ])
         self.S = S
-        self.met_out = nn.Sequential(
-            *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-            ]
-        )
+        self.met_out = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+        ])
         self.loc_layer = nn.Linear(met_dims[-1], met_dims[-1])
         self.scale_layer = nn.Sequential(
             nn.Linear(met_dims[-1], met_dims[-2]),
@@ -116,3 +106,38 @@ class Encoder(nn.Module):
         loc = self.loc_layer(out)
 
         return loc
+
+
+class ConcCoder(nn.Module):
+    def __init__(
+        self,
+        met_dims: list[int],
+    ):
+        super().__init__()
+        self.met_backbone = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU())
+            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+        ])
+        self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]), nn.Sigmoid())
+        # Initialize weights
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(
+        self,
+        conc: torch.FloatTensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        out = self.met_backbone(conc)
+        out = self.loc_layer(out).clamp(1e-6, 10)
+        return out
+        if torch.isnan(out).any():
+            print(f"{conc=}")
+            print(f"{out=}")
+            out = torch.full_like(out, 1)
+        return out 
