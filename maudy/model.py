@@ -299,6 +299,7 @@ class Maudy(nn.Module):
         self,
         obs_fluxes: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
+        penalize_ss: bool = True,
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
@@ -395,7 +396,7 @@ class Maudy(nn.Module):
             pyro.sample(
                 "steady_state_dev",
                 dist.Normal(ssd, self.bal_conc_loc.exp() / 10).to_event(1),
-                obs=torch.zeros((len(self.experiments), len(self.balanced_mics_idx))),
+                obs=torch.zeros((len(self.experiments), len(self.balanced_mics_idx))) if penalize_ss else 0,
             )
 
     # The guide specifies the variational distribution
@@ -403,6 +404,7 @@ class Maudy(nn.Module):
         self,
         obs_fluxes: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
+        penalize_ss: bool = True
     ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
