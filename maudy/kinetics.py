@@ -1,7 +1,7 @@
 """Functions to replicate the modular rate law from Maud."""
 
 import torch
-from .constants import DGF_WATER, RT
+from .constants import DGF_WATER, F, RT
 
 Vector = torch.Tensor
 Matrix = torch.Tensor
@@ -49,9 +49,9 @@ def get_free_enzyme_ratio(
     return (1 / (sub_contr + prod_contr)).reshape(conc.shape[0], -1)
 
 
-def get_reversibility(S: Matrix, dgr: Vector, conc: Vector) -> Vector:
+def get_reversibility(S: Matrix, dgr: Vector, conc: Vector, trans_charge: Vector, psi: torch.Tensor) -> Vector:
     """Add the membrane potential to dgr and compute reversibility."""
-    return 1 - torch.exp((dgr + RT * conc.log() @ S) / RT)
+    return 1 - torch.exp((dgr.unsqueeze(0) + trans_charge.unsqueeze(0) * psi.unsqueeze(1) * F + RT * (conc.log() @ S)) / RT)
 
 
 def get_vmax(kcat: Vector, enzyme_conc: Vector) -> Vector:
