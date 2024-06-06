@@ -134,10 +134,5 @@ class ConcCoder(nn.Module):
         conc: torch.FloatTensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         out = self.met_backbone(conc)
-        out = self.loc_layer(out).clamp(1e-6, 10)
+        out = self.loc_layer(out)
         return out
-        if torch.isnan(out).any():
-            print(f"{conc=}")
-            print(f"{out=}")
-            out = torch.full_like(out, 1)
-        return out 

@@ -12,11 +12,11 @@ from .black_box import ConcCoder
 from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio,
+    get_kinetic_drain,
     get_reversibility,
     get_saturation,
     get_vmax,
 )
-from .utils import pretty_print_tensor
 
 
 class Maudy(nn.Module):
@@ -149,6 +149,14 @@ class Maudy(nn.Module):
             ])
             for reac in enzymatic_reactions
         ]
+        # the same but for drains
+        assert all(st < 0 for reac in drain.ids[1] for _, st in reac_st[reac].items()), "drains are not implemented for products"
+        self.sub_conc_drain_idx = [
+            torch.LongTensor([
+                mics.index(met) for met, st in reac_st[reac].items() if st < 0
+            ])
+            for reac in drain.ids[1]
+        ]
         self.prod_conc_idx = [
             torch.LongTensor([
                 mics.index(met) for met, st in reac_st[reac].items() if st > 0
@@ -250,7 +258,7 @@ class Maudy(nn.Module):
             [i for exp in idx for i in exp],
         )
         # Setup the various neural networks used in the model and guide
-        self.concoder  = ConcCoder(
+        self.concoder = ConcCoder(
             met_dims=[
                 len(self.unbalanced_mics_idx) + len(self.balanced_mics_idx),
                 16,
@@ -294,9 +302,9 @@ class Maudy(nn.Module):
                 "unb_conc",
                 dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
             )
-            drain = (
+            kcat_drain = (
                 pyro.sample(
-                    "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
+                    "kcat_drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
                 )
                 if self.drain_mean.shape[1]
                 else None
@@ -305,11 +313,16 @@ class Maudy(nn.Module):
             psi = pyro.sample("psi", dist.Normal(-0.110, 0.01))
             bal_conc = pyro.sample(
                 "bal_conc",
-                dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(1),
+                dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(
+                    1
+                ),
             )
             correction = pyro.sample(
                 "conc_correction",
-                dist.LogNormal(torch.zeros_like(self.bal_conc_loc), 0.1 * torch.ones_like(self.bal_conc_loc)).to_event(1),
+                dist.LogNormal(
+                    torch.zeros_like(self.bal_conc_loc),
+                    0.1 * torch.ones_like(self.bal_conc_loc),
+                ).to_event(1),
             )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = bal_conc * correction
@@ -342,10 +355,6 @@ class Maudy(nn.Module):
         flux = pyro.deterministic("flux", vmax * rev * sat).reshape(
             len(self.experiments), len(self.sub_km_idx)
         )
-        # print(f"(M) {bal_conc=}")
-        # print(f"(M) {vmax=}")
-        # print(f"(M) {rev=}")
-        # print(f"(M) {sat=}")
         true_obs_flux = flux[self.obs_fluxes_idx]
         true_obs_conc = bal_conc[self.obs_conc_idx]
         # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
@@ -356,6 +365,8 @@ class Maudy(nn.Module):
         if true_obs_conc.ndim == 1:
             true_obs_conc = true_obs_conc.unsqueeze(-1)
 
+        # TODO: small drain correction from config
+        drain = pyro.deterministic("drain", get_kinetic_drain(kcat_drain, conc, self.sub_conc_drain_idx, 1e-9)) if kcat_drain is not None else None
         all_flux = (
             torch.cat([drain, flux], dim=1) if drain is not None else flux
         ).clamp(-1e14, 1)
@@ -412,17 +423,21 @@ class Maudy(nn.Module):
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             bal_conc = pyro.sample(
                 "bal_conc",
-                dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(1),
+                dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(
+                    1
+                ),
             )
             conc[:, self.balanced_mics_idx] = bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
             correction_loc = self.concoder(conc)
-            pyro.sample("conc_correction", dist.LogNormal(correction_loc, 0.1).to_event(1)) 
+            pyro.sample(
+                "conc_correction", dist.LogNormal(correction_loc, 0.1).to_event(1)
+            )
 
             pyro.sample("psi", dist.Normal(-0.110, 0.01))
             _ = (
                 pyro.sample(
-                    "drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
+                    "kcat_drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
                 )
                 if self.drain_mean.shape[1]
                 else None

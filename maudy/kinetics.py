@@ -3,6 +3,9 @@
 import torch
 from .constants import DGF_WATER, F, RT
 
+# per experiment expected type, just for clarification,
+# although these functions are called with the experiments
+# batched in the firs dimension
 Vector = torch.Tensor
 Matrix = torch.Tensor
 
@@ -56,3 +59,11 @@ def get_reversibility(S: Matrix, dgr: Vector, conc: Vector, trans_charge: Vector
 
 def get_vmax(kcat: Vector, enzyme_conc: Vector) -> Vector:
     return enzyme_conc * kcat
+
+
+def get_kinetic_drain(kcat_drain: Vector, conc: Vector, sub_conc_idx: list[Vector], drain_small_conc_corrector: float):
+    sub_contr = torch.cat([
+        (conc[:, conc_idx] / (conc[:, conc_idx] + drain_small_conc_corrector)).prod(dim=-1)
+        for conc_idx in sub_conc_idx
+    ]).reshape(kcat_drain.shape)
+    return kcat_drain * sub_contr
