@@ -400,24 +400,32 @@ class Maudy(nn.Module):
     ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
+        dgf_param_loc = pyro.param("dgf_loc", self.dgf_means)
         pyro.sample(
-            "dgf", dist.MultivariateNormal(self.dgf_means, scale_tril=self.dgf_cov)
+            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
+        kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
         kcat = pyro.sample(
-            "kcat", dist.LogNormal(self.kcat_loc, self.kcat_scale).to_event(1)
+            "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
         )
         _ = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
+            enzyme_concs_param_loc = pyro.param(
+                "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
+            )
             _ = pyro.sample(
                 "enzyme_conc",
-                dist.LogNormal(self.enzyme_concs_loc, self.enzyme_concs_scale).to_event(
-                    1
-                ),
+                dist.LogNormal(
+                    enzyme_concs_param_loc, self.enzyme_concs_scale
+                ).to_event(1),
+            )
+            unb_conc_param_loc = pyro.param(
+                "unb_conc_loc", self.unb_conc_loc, event_dim=1
             )
             unb_conc = pyro.sample(
                 "unb_conc",
-                dist.LogNormal(self.unb_conc_loc, self.unb_conc_scale).to_event(1),
+                dist.LogNormal(unb_conc_param_loc, self.unb_conc_scale).to_event(1),
             )
 
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
@@ -437,7 +445,8 @@ class Maudy(nn.Module):
             pyro.sample("psi", dist.Normal(-0.110, 0.01))
             _ = (
                 pyro.sample(
-                    "kcat_drain", dist.Normal(self.drain_mean, self.drain_std).to_event(1)
+                    "kcat_drain",
+                    dist.Normal(self.drain_mean, self.drain_std).to_event(1),
                 )
                 if self.drain_mean.shape[1]
                 else None
