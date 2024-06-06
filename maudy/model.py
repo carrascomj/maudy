@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import ConcCoder
+from .black_box import ConcCoder, ConcFdxCoder
 from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio,
@@ -130,7 +130,11 @@ class Maudy(nn.Module):
         )
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
         self.S = torch.FloatTensor(S.values)
+        # S matrix only for stoichoimetric reactions (to calculate saturation and drG)
         self.S_enz = torch.FloatTensor(S.loc[:, ~S.columns.isin(drain.ids[1])].values)
+        # S matrix used for thermo drG prime (reverisibility term), same as the one
+        # for enzymatic reactions but it may be modified later if ferredoxin is present
+        self.S_enz_thermo = torch.FloatTensor(S.loc[:, ~S.columns.isin(drain.ids[1])].values)
         mic_enz = S.loc[:, ~S.columns.isin(drain.ids[1])].index
         self.met_to_mic = torch.LongTensor(
             [mets.index(mic.split("_", 1)[0]) for mic in mic_enz]
@@ -277,8 +281,21 @@ class Maudy(nn.Module):
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
+        # Special case of ferredoxin: we want to add a per-experiment
+        # concentration ratio parameter (output of NN) and the dGf difference
+        self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
+        if hasattr(maud_input, "_fdx_stoichiometry"):
+            fdx = maud_input._fdx_stoichiometry
+            if fdx is not None:
+                self.fdx_stoichiometry = torch.FloatTensor(
+                    [fdx[r] if r in fdx else 0 for r in enzymatic_reactions]
+                )
+                # add row for S matrix to calculate DrG prime
+                self.S_enz_thermo = torch.cat([self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0)
+        self.has_fdx = any(st!=0 for st in self.fdx_stoichiometry)
         # Setup the various neural networks used in the model and guide
-        self.concoder = ConcCoder(
+        NN = ConcFdxCoder if self.has_fdx else ConcCoder
+        self.concoder = NN(
             met_dims=[
                 len(self.unbalanced_mics_idx) + len(self.balanced_mics_idx),
                 256,
@@ -307,8 +324,9 @@ class Maudy(nn.Module):
             "dgf", dist.MultivariateNormal(self.dgf_means, scale_tril=self.dgf_cov)
         )
         dgf = dgf.reshape(-1)
+        fdx_contr = pyro.sample("fdx_contr", dist.Normal(77, 1)) if self.has_fdx else torch.FloatTensor([0])
         dgr = pyro.deterministic(
-            "dgr", get_dgr(self.S_enz, dgf[self.met_to_mic], self.water_stoichiometry)
+            "dgr", get_dgr(self.S_enz, dgf[self.met_to_mic], self.water_stoichiometry, self.fdx_stoichiometry, fdx_contr),
         )
         km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
 
@@ -350,7 +368,9 @@ class Maudy(nn.Module):
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = bal_conc * correction
             conc[:, self.unbalanced_mics_idx] = unb_conc
-
+            if self.has_fdx:
+                fdx_ratio = pyro.sample("fdx_ratio", dist.LogNormal(torch.FloatTensor([1.0]), torch.FloatTensor([0.7])).to_event(1))
+                conc = torch.cat([conc, fdx_ratio], dim=1)
         free_enzyme_ratio = pyro.deterministic(
             "free_enzyme_ratio",
             get_free_enzyme_ratio(
@@ -367,7 +387,7 @@ class Maudy(nn.Module):
         vmax = pyro.deterministic("vmax", get_vmax(kcat, enzyme_conc))
         rev = pyro.deterministic(
             "rev",
-            get_reversibility(self.S_enz, dgr, conc, self.transported_charge, psi),
+            get_reversibility(self.S_enz_thermo, dgr, conc, self.transported_charge, psi),
         )
         sat = pyro.deterministic(
             "sat",
@@ -434,6 +454,9 @@ class Maudy(nn.Module):
         pyro.sample(
             "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
+        fdx_contr_loc = pyro.param("fdx_contr_loc", torch.Tensor([77]))
+        fdx_contr_scale = pyro.param("fdx_contr_scale", torch.Tensor([1]))
+        fdx_contr = pyro.sample("fdx_contr", dist.Normal(fdx_contr_loc, fdx_contr_scale)) if any(st!=0 for st in self.fdx_stoichiometry) else torch.FloatTensor([0])
         kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
         kcat = pyro.sample(
             "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
@@ -465,14 +488,7 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            conc[:, self.balanced_mics_idx] = bal_conc
-            conc[:, self.unbalanced_mics_idx] = unb_conc
-            correction_loc = self.concoder(conc)
-            pyro.sample(
-                "conc_correction", dist.LogNormal(correction_loc, 0.1).to_event(1)
-            )
-
-            pyro.sample("psi", dist.Normal(-0.110, 0.01))
+            psi = pyro.sample("psi", dist.Normal(-0.110, 0.01))
             _ = (
                 pyro.sample(
                     "kcat_drain",
@@ -480,6 +496,16 @@ class Maudy(nn.Module):
                 )
                 if self.drain_mean.shape[1]
                 else None
+            )
+            conc[:, self.balanced_mics_idx] = bal_conc
+            conc[:, self.unbalanced_mics_idx] = unb_conc
+            correction_loc = self.concoder(conc)
+
+            if self.has_fdx:
+                correction_loc, fdx_contr = correction_loc
+                fff = pyro.sample("fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1))
+            cc = pyro.sample(
+                "conc_correction", dist.LogNormal(correction_loc, 0.1).to_event(1)
             )
 
     def print_inputs(self):

@@ -10,9 +10,9 @@ Vector = torch.Tensor
 Matrix = torch.Tensor
 
 
-def get_dgr(S: Matrix, dgf: Vector, water_S: Vector) -> Vector:
+def get_dgr(S: Matrix, dgf: Vector, water_S: Vector, fdx_S: Vector, fdx_contr: torch.FloatTensor) -> Vector:
     """Compute the experiment-agnostic dGr (no membrane potential)."""
-    return S.T @ dgf + water_S * DGF_WATER
+    return S.T @ dgf + water_S * DGF_WATER + fdx_S * fdx_contr
 
 
 def get_saturation(

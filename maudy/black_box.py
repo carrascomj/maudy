@@ -136,3 +136,35 @@ class ConcCoder(nn.Module):
         out = self.met_backbone(conc)
         out = self.loc_layer(out)
         return out
+
+
+class ConcFdxCoder(nn.Module):
+    def __init__(
+        self,
+        met_dims: list[int],
+    ):
+        super().__init__()
+        self.met_backbone = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU())
+            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+        ])
+        self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]))
+        self.fdx_layer = nn.Sequential(nn.Linear(met_dims[-1], 1))
+        # Initialize weights
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(
+        self,
+        conc: torch.FloatTensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        out = self.met_backbone(conc)
+        out = self.loc_layer(out)
+        fdx_contribution = self.fdx_layer(out)
+        return out, fdx_contribution

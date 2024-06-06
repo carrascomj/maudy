@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
 import pyro
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
@@ -57,6 +58,12 @@ def get_timestamp():
     return datetime.now().isoformat().replace(":", "").replace("-", "").replace(".", "")
 
 
+def load_ferredoxin(maud_dir: Path) -> Optional[dict[str, float]]:
+    ferre_path = maud_dir / "ferredoxin.txt"
+    if ferre_path.exists():
+        return pd.read_csv(ferre_path, sep=",", names=["reaction", "stoichiometry"]).set_index("reaction").to_dict()["stoichiometry"]
+
+
 def sample(
     maud_dir: Path,
     num_epochs: int = 100,
@@ -66,6 +73,7 @@ def sample(
 ):
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
+    maud_input._fdx_stoichiometry = load_ferredoxin(maud_dir)
     maudy, optimizer = train(maud_input, num_epochs, penalize_ss=penalize_ss)
     if smoke:
         return

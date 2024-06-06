@@ -11,11 +11,13 @@ from pyro.optim import ClippedAdam
 from pyro.infer import Predictive, config_enumerate
 
 from .model import Maudy
+from .train import load_ferredoxin
 
 
 def load(model_output: Path):
-    user_input = str(model_output / "user_input")
-    maud_input = load_maud_input(user_input)
+    user_input = model_output / "user_input"
+    maud_input = load_maud_input(str(user_input))
+    maud_input._fdx_stoichiometry = load_ferredoxin(user_input)
     maudy = Maudy(maud_input)
     state_dict = torch.load(model_output / "model.pt", map_location="cpu")
     maudy.load_state_dict(state_dict["maudy"])
