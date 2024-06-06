@@ -31,8 +31,8 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
 
     # Setup an optimizer (Adam) and learning rate scheduler.
     # We start with a moderately high learning rate (0.006) and
-    # reduce by a factor of 5 after 20 epochs.
-    optimizer = ClippedAdam({"lr": 1e-6, "lrd": 0.2 ** (1 / num_epochs)})
+    # reduce to 6e-7 over the course of training.
+    optimizer = ClippedAdam({"lr": 0.0006, "lrd": 0.0001 ** (1 / num_epochs)})
     # Tell Pyro to enumerate out y when y is unobserved.
     # (By default y would be sampled from the guide)
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
@@ -46,8 +46,10 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
     for _ in progress_bar:
         loss = svi.step(obs_fluxes, obs_conc, penalize_ss)
-        progress_bar.set_postfix(loss=f"{loss:.2e}")
-
+        opt_state = optimizer.get_state() 
+        opt_state = list(opt_state.values())[0]
+        lr = opt_state["param_groups"][0]["lr"]
+        progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}")
     return maudy, optimizer
 
 
