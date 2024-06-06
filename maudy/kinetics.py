@@ -22,11 +22,11 @@ def get_saturation(
     sub_conc_idx: list[Vector],
     sub_km_idx: list[Vector],
 ) -> Vector:
-    sub_conc_over_km = torch.cat([
+    sub_conc_over_km = torch.stack([
         (conc[:, conc_idx] / km[..., km_idx]).prod(dim=-1)
         for conc_idx, km_idx in zip(sub_conc_idx, sub_km_idx)
-    ])
-    return free_enzyme_ratio * sub_conc_over_km.reshape(conc.shape[0], -1)
+    ], dim=1)
+    return free_enzyme_ratio * sub_conc_over_km
 
 
 def get_free_enzyme_ratio(
@@ -39,17 +39,17 @@ def get_free_enzyme_ratio(
     substrate_S: list[Vector],
     product_S: list[Vector],
 ) -> Vector:
-    prod_contr = torch.cat([
+    prod_contr = torch.stack([
         ((1.0 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1) - 1.0
         if km_idx.size(0)
         else torch.zeros(1)  # if irr: no km for prods: no prod_contr
         for conc_idx, km_idx, st in zip(prod_conc_idx, prod_km_idx, product_S)
-    ])
-    sub_contr = torch.cat([
+    ], dim=1)
+    sub_contr = torch.stack([
         ((1 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1)
         for conc_idx, km_idx, st in zip(sub_conc_idx, sub_km_idx, substrate_S)
-    ])
-    return (1 / (sub_contr + prod_contr)).reshape(conc.shape[0], -1)
+    ], dim=1)
+    return (1 / (sub_contr + prod_contr))
 
 
 def get_reversibility(S: Matrix, dgr: Vector, conc: Vector, trans_charge: Vector, psi: torch.Tensor) -> Vector:
@@ -62,8 +62,8 @@ def get_vmax(kcat: Vector, enzyme_conc: Vector) -> Vector:
 
 
 def get_kinetic_drain(kcat_drain: Vector, conc: Vector, sub_conc_idx: list[Vector], drain_small_conc_corrector: float):
-    sub_contr = torch.cat([
+    sub_contr = torch.stack([
         (conc[:, conc_idx] / (conc[:, conc_idx] + drain_small_conc_corrector)).prod(dim=-1)
         for conc_idx in sub_conc_idx
-    ]).reshape(kcat_drain.shape)
+    ], dim=1)
     return kcat_drain * sub_contr
