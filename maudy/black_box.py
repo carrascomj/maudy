@@ -118,7 +118,7 @@ class ConcCoder(nn.Module):
             nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU())
             for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
         ])
-        self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]), nn.Sigmoid())
+        self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]))
         # Initialize weights
         self._initialize_weights()
 
