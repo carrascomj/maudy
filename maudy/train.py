@@ -47,7 +47,7 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
     for _ in progress_bar:
         loss = svi.step(obs_fluxes, obs_conc, penalize_ss)
-        opt_state = optimizer.get_state() 
+        opt_state = optimizer.get_state()
         opt_state = list(opt_state.values())[0]
         lr = opt_state["param_groups"][0]["lr"]
         progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}")
@@ -61,7 +61,11 @@ def get_timestamp():
 def load_ferredoxin(maud_dir: Path) -> Optional[dict[str, float]]:
     ferre_path = maud_dir / "ferredoxin.txt"
     if ferre_path.exists():
-        return pd.read_csv(ferre_path, sep=",", names=["reaction", "stoichiometry"]).set_index("reaction").to_dict()["stoichiometry"]
+        return (
+            pd.read_csv(ferre_path, sep=",", names=["reaction", "stoichiometry"])
+            .set_index("reaction")
+            .to_dict()["stoichiometry"]
+        )
 
 
 def sample(

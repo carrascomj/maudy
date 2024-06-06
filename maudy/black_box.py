@@ -13,23 +13,29 @@ class Decoder(nn.Module):
         reac_features: int,
     ):
         super().__init__()
-        self.met_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-        ])
-        self.reac_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
-        ])
+        self.met_backbone = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+            ]
+        )
+        self.reac_backbone = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
+            ]
+        )
         # before passing it to the reac_backbone, we need to perform a convolution
         # over the reaction features (dgr, enz_conc, etc.) to a single feature
         self.reac_conv = nn.Sequential(nn.Conv1d(reac_features, 1, 1), nn.ReLU())
 
         self.drain_backbone = (
-            nn.Sequential(*[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(drain_dims[:-1], drain_dims[1:])
-            ])
+            nn.Sequential(
+                *[
+                    nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                    for in_dim, out_dim in zip(drain_dims[:-1], drain_dims[1:])
+                ]
+            )
             if drain_dims[0]
             else None
         )
@@ -80,15 +86,19 @@ class Encoder(nn.Module):
         S: torch.Tensor,
     ):
         super().__init__()
-        self.reac_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
-        ])
+        self.reac_backbone = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
+            ]
+        )
         self.S = S
-        self.met_out = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-        ])
+        self.met_out = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+            ]
+        )
         self.loc_layer = nn.Linear(met_dims[-1], met_dims[-1])
         self.scale_layer = nn.Sequential(
             nn.Linear(met_dims[-1], met_dims[-2]),
@@ -114,10 +124,14 @@ class ConcCoder(nn.Module):
         met_dims: list[int],
     ):
         super().__init__()
-        self.met_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-        ])
+        self.met_backbone = nn.Sequential(
+            *[
+                nn.Sequential(
+                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                )
+                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+            ]
+        )
         self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]))
         # Initialize weights
         self._initialize_weights()
@@ -144,10 +158,14 @@ class ConcFdxCoder(nn.Module):
         met_dims: list[int],
     ):
         super().__init__()
-        self.met_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-        ])
+        self.met_backbone = nn.Sequential(
+            *[
+                nn.Sequential(
+                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                )
+                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+            ]
+        )
         self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]))
         self.fdx_layer = nn.Sequential(nn.Linear(met_dims[-1], 1))
         # Initialize weights
