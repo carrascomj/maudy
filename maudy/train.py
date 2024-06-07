@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import pyro
 import torch
@@ -15,6 +16,18 @@ from tqdm import tqdm
 from .model import Maudy
 from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
+
+
+def log_cosine_schedule(start_value: float, end_value: float, iterations: int) -> torch.Tensor:
+    """Compute a log cosine schedule between `start_value` and `end_value` over `iterations`."""
+    assert iterations > 0, ValueError("Number of iterations must be greater than 0.")  
+    log_start = np.log10(start_value)
+    log_end = np.log10(end_value)
+    t = np.arange(iterations) / (iterations - 1)
+    cos_values = (1 + np.cos(np.pi * t)) / 2
+    log_schedule = log_end + (log_start - log_end) * cos_values
+    # Convert back from log10 scale
+    return torch.FloatTensor(10 ** log_schedule)
 
 
 def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool = False):
@@ -44,12 +57,13 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
     # for automatic enumeration of the discrete latent variable y.
     elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
+    penalization_temp = log_cosine_schedule(1, 1e-5, num_epochs)
 
-    progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
-    for _ in progress_bar:
-        loss = svi.step(obs_fluxes, obs_conc, penalize_ss)
+    progress_bar = tqdm(penalization_temp, total=num_epochs, desc="Training", unit="epoch")
+    for penalization_ss in progress_bar:
+        loss = svi.step(obs_fluxes, obs_conc, penalization_ss if penalize_ss else False)
         lr = list(optimizer.get_state().values())[0]["param_groups"][0]["lr"]
-        progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}")
+        progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}", ss=f"{penalization_ss:.2e}")
     return maudy, optimizer
 
 

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from copy import deepcopy
-from typing import Optional
+from typing import Optional, Union
 
 import pandas as pd
 import pyro
@@ -355,7 +355,7 @@ class Maudy(nn.Module):
         self,
         obs_fluxes: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
-        penalize_ss: bool = True,
+        penalize_ss: Union[bool, float] = True,
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
@@ -495,10 +495,10 @@ class Maudy(nn.Module):
                 obs=obs_conc,
             )
             # steady state penalization
-            if penalize_ss:
+            if penalize_ss or isinstance(penalize_ss, float):
                 pyro.sample(
                     "steady_state_dev",
-                    dist.Normal(0, self.bal_conc_loc.abs()).to_event(1),
+                    dist.Normal(0, float(penalize_ss) * self.bal_conc_loc.abs()).to_event(1),
                     obs=ssd,
                 )
 
