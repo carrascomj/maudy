@@ -1,5 +1,7 @@
 """Functions to replicate the modular rate law from Maud."""
 
+from typing import Sequence
+
 import torch
 from .constants import DGF_WATER, F, RT
 
@@ -8,6 +10,8 @@ from .constants import DGF_WATER, F, RT
 # batched in the firs dimension
 Vector = torch.Tensor
 Matrix = torch.Tensor
+# length reactions, each vector are indices that map a variable to that reaction
+ReacIndex = Sequence[torch.LongTensor]
 
 
 def get_dgr(
@@ -34,7 +38,7 @@ def get_saturation(
     return free_enzyme_ratio * sub_conc_over_km
 
 
-def get_free_enzyme_ratio(
+def get_free_enzyme_ratio_denom(
     conc: Vector,
     km: Vector,
     sub_conc_idx: list[Vector],
@@ -60,7 +64,20 @@ def get_free_enzyme_ratio(
         ],
         dim=1,
     )
-    return 1 / (sub_contr + prod_contr)
+    return sub_contr + prod_contr
+
+
+def get_competitive_inhibition_denom(
+    conc: Vector, ki: Vector, ci_conc_idx: ReacIndex, ki_idx: ReacIndex
+):
+    sub_contr = torch.stack(
+        [
+            (1 + (conc[:, conc_idx] / ki[..., ki_idx])).sum(dim=-1)
+            for conc_idx, ki_idx in zip(ci_conc_idx, ki_idx)
+        ],
+        dim=1,
+    )
+    return sub_contr
 
 
 def get_reversibility(

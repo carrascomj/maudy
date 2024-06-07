@@ -1,3 +1,4 @@
+from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
 
@@ -11,7 +12,8 @@ from maud.data_model.experiment import MeasurementType
 from .black_box import ConcCoder, ConcFdxCoder
 from .kinetics import (
     get_dgr,
-    get_free_enzyme_ratio,
+    get_free_enzyme_ratio_denom,
+    get_competitive_inhibition_denom,
     get_kinetic_drain,
     get_reversibility,
     get_saturation,
@@ -208,6 +210,29 @@ class Maudy(nn.Module):
             )
             for enz, reac in zip(enzymes, enzymatic_reactions)
         ]
+        # competitive inhibition
+        kis = self.maud_params.ki.prior
+        self.has_ci = False
+        if kis.location:
+            ki_map = defaultdict(list)
+            for i, ki_id in enumerate(kis.ids[0]):
+                enzyme, _, mic = ki_id.split("_", 2)
+                ki_map[enzyme].append((i, mics.index(mic)))
+            self.ki_loc = torch.FloatTensor(kis.location)
+            self.ki_scale = torch.FloatTensor(kis.scale)
+            self.ki_idx = [
+                torch.LongTensor(
+                    [i_ki for i_ki, _ in ki_map[enz]]
+                )
+                for enz in enzymes
+            ]
+            self.ki_conc_idx = [
+                torch.LongTensor(
+                    [i_conc for _, i_conc in ki_map[enz]] if enz in ki_map else []
+                )
+                for enz in enzymes
+            ]
+            self.has_ci = True
         # verify that the indices are at least injective
         all_sub_idx = [
             conc_idx for reac_idx in self.sub_km_idx for conc_idx in reac_idx
@@ -344,6 +369,8 @@ class Maudy(nn.Module):
             ),
         )
         km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
+        if self.has_ci:
+            ki = pyro.sample("ki", dist.LogNormal(self.ki_loc, self.ki_scale).to_event(1))
 
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
@@ -391,18 +418,20 @@ class Maudy(nn.Module):
                     ).to_event(1),
                 )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
+        free_enz_km_denom = get_free_enzyme_ratio_denom(
+            conc,
+            km,
+            self.sub_conc_idx,
+            self.sub_km_idx,
+            self.prod_conc_idx,
+            self.prod_km_idx,
+            self.substrate_S,
+            self.product_S,
+        )
+        free_enz_ki_denom = get_competitive_inhibition_denom(conc, ki, self.ki_conc_idx, self.ki_idx) if self.has_ci else 0
         free_enzyme_ratio = pyro.deterministic(
             "free_enzyme_ratio",
-            get_free_enzyme_ratio(
-                conc,
-                km,
-                self.sub_conc_idx,
-                self.sub_km_idx,
-                self.prod_conc_idx,
-                self.prod_km_idx,
-                self.substrate_S,
-                self.product_S,
-            ),
+            1 / (free_enz_km_denom + free_enz_ki_denom),
         )
         vmax = pyro.deterministic("vmax", get_vmax(kcat, enzyme_conc))
         rev = pyro.deterministic(
@@ -490,7 +519,13 @@ class Maudy(nn.Module):
         kcat = pyro.sample(
             "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
         )
-        _ = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
+        km_loc = pyro.param("km_loc", self.km_loc)
+        km_scale = pyro.param("km_scale", self.km_scale)
+        _ = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
+        if self.has_ci:
+            ki_loc = pyro.param("ki_loc", self.ki_loc)
+            ki_scale = pyro.param("ki_scale", self.ki_scale)
+            pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
             enzyme_concs_param_loc = pyro.param(
@@ -517,7 +552,7 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            psi = pyro.sample("psi", dist.Normal(-0.110, 0.01))
+            pyro.sample("psi", dist.Normal(-0.110, 0.01))
             _ = (
                 pyro.sample(
                     "kcat_drain",
@@ -532,10 +567,10 @@ class Maudy(nn.Module):
 
             if self.has_fdx:
                 correction_loc, fdx_contr = correction_loc
-                fff = pyro.sample(
+                pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
                 )
-            cc = pyro.sample(
+            pyro.sample(
                 "conc_correction", dist.LogNormal(correction_loc, 0.1).to_event(1)
             )
 
