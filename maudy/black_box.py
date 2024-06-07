@@ -122,6 +122,7 @@ class ConcCoder(nn.Module):
     def __init__(
         self,
         met_dims: list[int],
+        **_,
     ):
         super().__init__()
         self.met_backbone = nn.Sequential(
@@ -146,10 +147,13 @@ class ConcCoder(nn.Module):
     def forward(
         self,
         conc: torch.FloatTensor,
+        *_args,
+        **_kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         out = self.met_backbone(conc)
-        out = self.loc_layer(out)
-        return out
+        loc = self.loc_layer(out)
+        scale = self.scale_layer(out)
+        return loc, scale
 
 
 class ConcFdxCoder(nn.Module):
@@ -166,8 +170,17 @@ class ConcFdxCoder(nn.Module):
                 for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
             ]
         )
-        self.loc_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]))
-        self.fdx_layer = nn.Sequential(nn.Linear(met_dims[-1], 1))
+        self.loc_layer  = nn.Sequential(
+            nn.Linear(met_dims[-1], met_dims[-2]),
+            nn.Sigmoid(),
+            nn.Linear(met_dims[-2], met_dims[-1]),
+        )
+        self.scale_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]), nn.Softplus())
+        self.fdx_layer = nn.Sequential(
+            nn.Linear(met_dims[-1], met_dims[-2]),
+            nn.Sigmoid(),
+            nn.Linear(met_dims[-2], 1),
+        )
         # Initialize weights
         self._initialize_weights()
 
@@ -181,8 +194,88 @@ class ConcFdxCoder(nn.Module):
     def forward(
         self,
         conc: torch.FloatTensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         out = self.met_backbone(conc)
-        out = self.loc_layer(out)
+        loc = self.loc_layer(out)
+        scale = self.scale_layer(out)
         fdx_contribution = self.fdx_layer(out)
-        return out, fdx_contribution
+        return loc, scale, fdx_contribution
+
+
+class AllFdxCoder(nn.Module):
+    def __init__(
+        self,
+        met_dims: list[int],
+        reac_dims: list[int],
+        km_dims: list[int],
+    ):
+        super().__init__()
+        # metabolites
+        self.met_backbone = nn.Sequential(
+            *[
+                nn.Sequential(
+                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                )
+                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+            ]
+        )
+        # reactions
+        self.reac_backbone = nn.Sequential(
+            *[
+                nn.Sequential(
+                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                )
+                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
+            ]
+        )
+        # before passing it to the reac_backbone, we need to perform a convolution
+        # over the reaction features (dgr, enz_conc, etc.) to a single feature
+        self.reac_conv = nn.Sequential(nn.Conv1d(2, 1, 1), nn.ReLU())
+        # kms
+        self.km_backbone = nn.Sequential(
+            *[
+                nn.Sequential(
+                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                )
+                for in_dim, out_dim in zip(km_dims[:-1], km_dims[1:])
+            ]
+        )
+
+        self.out_layer = nn.Sequential(
+            nn.Linear(reac_dims[-1] + met_dims[-1] + km_dims[-1], met_dims[-2]),
+            nn.ReLU(),
+            nn.Linear(met_dims[-2], met_dims[-1]),
+        )
+        self.loc_layer  = nn.Sequential(
+            nn.Linear(met_dims[-1], met_dims[-2]),
+            nn.ReLU(),
+            nn.Linear(met_dims[-2], met_dims[-1]),
+        )
+        self.scale_layer = nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]), nn.Softplus())
+        self.fdx_layer = nn.Sequential(
+            nn.Linear(met_dims[-1], met_dims[-2]),
+            nn.Sigmoid(),
+            nn.Linear(met_dims[-2], 1),
+        )
+
+    def forward(
+        self,
+        conc: torch.FloatTensor,
+        dgr: torch.FloatTensor,
+        enz_conc: torch.FloatTensor,
+        km: torch.FloatTensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        out = self.met_backbone(conc)
+        reac_features = torch.stack(
+            [dgr.repeat(enz_conc.shape[0]).reshape(-1, dgr.shape[0]), enz_conc], dim=1
+        )
+        reac_features = self.reac_conv(reac_features)
+        reac_features = reac_features.squeeze(1)
+        reac_out = self.reac_backbone(reac_features)
+        km_out = self.km_backbone(km.repeat(enz_conc.shape[0]).reshape(-1, km.shape[0]))
+        out = self.out_layer(torch.cat([out, reac_out, km_out], dim=-1))
+
+        loc = self.loc_layer(out)
+        scale = self.scale_layer(out)
+        fdx_contribution = self.fdx_layer(out)
+        return loc, scale, fdx_contribution

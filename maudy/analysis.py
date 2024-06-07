@@ -115,12 +115,13 @@ def report_to_dfs(
 def predict(maudy: Maudy, num_epochs: int) -> dict[Any, torch.Tensor]:
     """Run posterior predictive check."""
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
-    return Predictive(
-        maudy.model,
-        guide=guide,
-        num_samples=num_epochs,
-        return_sites=("y_flux_train", "bal_conc", "ssd"),
-    )()
+    with torch.no_grad():
+        return Predictive(
+            maudy.model,
+            guide=guide,
+            num_samples=num_epochs,
+            return_sites=("y_flux_train", "bal_conc", "ssd"),
+        )()
 
 
 def ppc(model_output: Path, num_epochs: int = 800):

@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import ConcCoder, ConcFdxCoder
+from .black_box import ConcCoder, AllFdxCoder
 from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -323,7 +323,7 @@ class Maudy(nn.Module):
                 )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         # Setup the various neural networks used in the model and guide
-        NN = ConcFdxCoder if self.has_fdx else ConcCoder
+        NN = AllFdxCoder if self.has_fdx else ConcCoder
         self.concoder = NN(
             met_dims=[
                 len(self.unbalanced_mics_idx) + len(self.balanced_mics_idx),
@@ -333,6 +333,22 @@ class Maudy(nn.Module):
                 256,
                 len(self.balanced_mics_idx),
             ],
+            reac_dims=[
+                len(enzymatic_reactions),
+                256,
+                256,
+                256,
+                256,
+                16,
+            ],
+            km_dims=[
+                len(self.km_loc),
+                256,
+                256,
+                256,
+                256,
+                16,
+            ]
         )
 
     def model(
@@ -400,15 +416,8 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            correction = pyro.sample(
-                "conc_correction",
-                dist.LogNormal(
-                    torch.zeros_like(self.bal_conc_loc),
-                    0.1 * torch.ones_like(self.bal_conc_loc),
-                ).to_event(1),
-            )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = bal_conc * correction
+            conc[:, self.balanced_mics_idx] = bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
@@ -473,7 +482,6 @@ class Maudy(nn.Module):
         ).clamp(-1e14, 1)
         ssd = (
             pyro.deterministic("ssd", all_flux @ self.S.T[:, self.balanced_mics_idx])
-            / bal_conc
         )
         with exp_plate:
             pyro.sample(
@@ -487,13 +495,12 @@ class Maudy(nn.Module):
                 obs=obs_conc,
             )
             # steady state penalization
-            pyro.sample(
-                "steady_state_dev",
-                dist.Normal(ssd, 2).to_event(1),
-                obs=torch.zeros((len(self.experiments), len(self.balanced_mics_idx)))
-                if penalize_ss
-                else None,
-            )
+            if penalize_ss:
+                pyro.sample(
+                    "steady_state_dev",
+                    dist.Normal(0, self.bal_conc_loc.abs()).to_event(1),
+                    obs=ssd,
+                )
 
     # The guide specifies the variational distribution
     def guide(
@@ -505,7 +512,7 @@ class Maudy(nn.Module):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
         dgf_param_loc = pyro.param("dgf_loc", self.dgf_means)
-        pyro.sample(
+        dgf = pyro.sample(
             "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
         fdx_contr_loc = pyro.param("fdx_contr_loc", torch.Tensor([77]))
@@ -521,7 +528,14 @@ class Maudy(nn.Module):
         )
         km_loc = pyro.param("km_loc", self.km_loc)
         km_scale = pyro.param("km_scale", self.km_scale)
-        _ = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
+        km = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
+        dgr = get_dgr(
+            self.S_enz,
+            dgf[self.met_to_mic],
+            self.water_stoichiometry,
+            self.fdx_stoichiometry,
+            fdx_contr,
+        )
         if self.has_ci:
             ki_loc = pyro.param("ki_loc", self.ki_loc)
             ki_scale = pyro.param("ki_scale", self.ki_scale)
@@ -531,7 +545,7 @@ class Maudy(nn.Module):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
             )
-            _ = pyro.sample(
+            enz_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(
                     enzyme_concs_param_loc, self.enzyme_concs_scale
@@ -546,12 +560,6 @@ class Maudy(nn.Module):
             )
 
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            bal_conc = pyro.sample(
-                "bal_conc",
-                dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(
-                    1
-                ),
-            )
             pyro.sample("psi", dist.Normal(-0.110, 0.01))
             _ = (
                 pyro.sample(
@@ -561,17 +569,19 @@ class Maudy(nn.Module):
                 if self.drain_mean.shape[1]
                 else None
             )
-            conc[:, self.balanced_mics_idx] = bal_conc
+            conc[:, self.balanced_mics_idx] = self.bal_conc_loc.log()
             conc[:, self.unbalanced_mics_idx] = unb_conc
-            correction_loc = self.concoder(conc)
+            concoder_output = self.concoder(conc, dgr, enz_conc, km)
 
             if self.has_fdx:
-                correction_loc, fdx_contr = correction_loc
+                bal_conc_loc, bal_conc_scale, fdx_contr = concoder_output
                 pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
                 )
+            else:
+                bal_conc_loc, bal_conc_scale = concoder_output
             pyro.sample(
-                "conc_correction", dist.LogNormal(correction_loc, 0.1).to_event(1)
+                "bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
             )
 
     def print_inputs(self):
