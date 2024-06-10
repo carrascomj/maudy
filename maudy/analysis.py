@@ -39,11 +39,11 @@ def summary(samples):
 
 
 def report_to_dfs(
-    maudy: Maudy, samples: dict[Any, torch.Tensor]
-) -> tuple[pd.DataFrame, ...]:
-    samples["steady_state_dev"] = samples["ssd"].squeeze(1)
+    maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: list[str]
+):
     pred_summary = summary(samples)
     balanced_mics = [met.id for met in maudy.kinetic_model.mics if met.balanced]
+    unbalanced_mics = [met.id for met in maudy.kinetic_model.mics if not met.balanced]
     # assume obs_fluxes do not change across conditions
     obs_fluxes = [
         [
@@ -65,54 +65,41 @@ def report_to_dfs(
         for meas in exp.measurements
         if meas.target_type == MeasurementType.MIC
     }
-    ssds: list[pd.DataFrame] = []
-    y_flux_trains: list[pd.DataFrame] = []
-    concs: list[pd.DataFrame] = []
+    kcat_pars = maudy.maud_params.kcat.prior
+    # we have to this splits because this maud is wrong...
+    enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
+    across_exps = {var_name: [] for var_name in var_names}
     for i, experiment in enumerate(maudy.experiments):
-        ssd = {}
-        y_flux_train = {}
-        conc = {}
-        for key, items in pred_summary["steady_state_dev"].items():
-            ssd[key] = items[i, :]
-        for key, items in pred_summary["y_flux_train"].items():
-            y_flux_train[key] = items[i]
-        for key, items in pred_summary["bal_conc"].items():
-            conc[key] = items[i]
-        ssd = pd.DataFrame(ssd, index=balanced_mics)
-        ssd["experiment"] = experiment
-        ssds.append(ssd)
-        y_flux_train = pd.DataFrame(y_flux_train, index=obs_fluxes)
-        y_flux_train["experiment"] = experiment
-        y_flux_trains.append(y_flux_train)
-        conc = pd.DataFrame(conc, index=balanced_mics)
-        conc["experiment"] = experiment
-        concs.append(conc)
-
-    ssd = pd.concat(ssds)
-    y_flux_train = pd.concat(y_flux_trains)
-    conc = pd.concat(concs)
-    y_flux_train["measurement"] = y_flux_train.apply(
-        lambda x: flux_measurements[(x["experiment"], x.name)]
-        if (x["experiment"], x.name) in flux_measurements
-        else None,
-        axis=1,
-    )
-    ssd["measurement"] = ssd.apply(
-        lambda x: mics_measurements[(x["experiment"], x.name)]
-        if (x["experiment"], x.name) in mics_measurements
-        else None,
-        axis=1,
-    )
-    conc["measurement"] = conc.apply(
-        lambda x: mics_measurements[(x["experiment"], x.name)]
-        if (x["experiment"], x.name) in mics_measurements
-        else None,
-        axis=1,
-    )
-    return y_flux_train, ssd, conc
+        for var_name in across_exps.keys():
+            this_dict = {}
+            for key, items in pred_summary[var_name].items():
+                this_dict[key] = items[i] if var_name != "dgr" else items.squeeze(0)
+            df = pd.DataFrame(
+                this_dict,
+                index=obs_fluxes
+                if var_name == "y_flux_train"
+                else unbalanced_mics
+                if "unb" in var_name
+                else balanced_mics
+                if "dgr" != var_name else enzymatic_reactions,
+            )
+            df["experiment"] = experiment
+            across_exps[var_name].append(df)
+    across_exps = {var_name: pd.concat(dfs) for var_name, dfs in across_exps.items()}
+    for var_name in across_exps.keys():
+        measurements = flux_measurements if var_name == "y_flux_train" else mics_measurements        
+        across_exps[var_name]["measurement"] = across_exps[var_name].apply(
+            lambda x: measurements[(x["experiment"], x.name)]
+            if (x["experiment"], x.name) in measurements
+            else None,
+            axis=1,
+        )
+        if across_exps[var_name]["measurement"].isnull().all():
+            del across_exps[var_name]["measurement"]
+    return across_exps
 
 
-def predict(maudy: Maudy, num_epochs: int) -> dict[Any, torch.Tensor]:
+def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[Any, torch.Tensor]:
     """Run posterior predictive check."""
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
     with torch.no_grad():
@@ -120,17 +107,17 @@ def predict(maudy: Maudy, num_epochs: int) -> dict[Any, torch.Tensor]:
             maudy.model,
             guide=guide,
             num_samples=num_epochs,
-            return_sites=("y_flux_train", "bal_conc", "ssd"),
+            return_sites=var_names,
         )()
 
 
 def ppc(model_output: Path, num_epochs: int = 800):
+    var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr")
     maudy, _ = load(model_output)
-    samples = predict(maudy, num_epochs)
-    y_flux_train, ssd, conc = report_to_dfs(maudy, samples)
-    print("### Measured fluxes ###")
-    print(y_flux_train)
-    print("### Steady state dev ###")
-    print(ssd)
-    print("### [M] ###")
-    print(conc)
+    samples = predict(maudy, num_epochs, var_names=var_names)
+    samples["ssd"] = samples["ssd"].squeeze(1)
+    gathered_samples = report_to_dfs(maudy, samples, var_names=list(var_names))
+    for var_name, df in gathered_samples.items():
+        print(f"### {var_name} ###")
+        print(df)
+        
