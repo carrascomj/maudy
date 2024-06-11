@@ -368,10 +368,10 @@ class Maudy(nn.Module):
         self.concoder = NN(
             met_dims=[
                 self.num_mics,
-                256,
-                256,
-                256,
-                256,
+                2048,
+                2048,
+                2048,
+                2048,
                 len(self.balanced_mics_idx),
             ],
             reac_dims=[
@@ -384,8 +384,6 @@ class Maudy(nn.Module):
             ],
             km_dims=[
                 len(self.km_loc),
-                256,
-                256,
                 256,
                 256,
                 16,
@@ -558,7 +556,7 @@ class Maudy(nn.Module):
             "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
         fdx_contr_loc = pyro.param("fdx_contr_loc", torch.Tensor([77]))
-        fdx_contr_scale = pyro.param("fdx_contr_scale", torch.Tensor([1]))
+        fdx_contr_scale = pyro.param("fdx_contr_scale", torch.Tensor([1]), constraint=Positive)
         fdx_contr = (
             pyro.sample("fdx_contr", dist.Normal(fdx_contr_loc, fdx_contr_scale))
             if any(st != 0 for st in self.fdx_stoichiometry)
@@ -569,7 +567,7 @@ class Maudy(nn.Module):
             "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
         )
         km_loc = pyro.param("km_loc", self.km_loc)
-        km_scale = pyro.param("km_scale", self.km_scale)
+        km_scale = pyro.param("km_scale", self.km_scale, Positive)
         km = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
         dgr = get_dgr(
             self.S_enz,
@@ -580,7 +578,7 @@ class Maudy(nn.Module):
         )
         if self.has_ci:
             ki_loc = pyro.param("ki_loc", self.ki_loc)
-            ki_scale = pyro.param("ki_scale", self.ki_scale)
+            ki_scale = pyro.param("ki_scale", self.ki_scale, Positive)
             pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
@@ -593,7 +591,8 @@ class Maudy(nn.Module):
                     enzyme_concs_param_loc, self.enzyme_concs_scale
                 ).to_event(1),
             )
-            pyro.sample("psi", dist.Normal(-0.110, 0.01))
+            psi_mean = pyro.param("psi_mean", torch.Tensor([-0.110]))
+            pyro.sample("psi", dist.Normal(psi_mean, 0.01))
             drain_mean = pyro.param("drain_mean", lambda: self.drain_mean)
             drain_std = pyro.param("drain_std", lambda: self.drain_std, constraint=Positive)
             _ = (
