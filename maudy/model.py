@@ -25,8 +25,13 @@ class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, optimize_unbalanced: Optional[list[str]] = None):
         """Initialize the priors of the model.
 
+        maud_input: MaudInput
+            a `MaudInput` with an optionally injected `._fdx_stoichiometry`
+            dict atttribute with identifiers as keys and its ferredoxin
+            stoichiometry as values (defaults 0 for reactions not in the dict).
         optimize_unbalanced: Optional[list[str]]
-            unbalanced metabolite-in-compartment identifiers to infer as the ouptut of the neural network.
+            unbalanced metabolite-in-compartment identifiers to infer as the
+            output of the neural network.
         """
         super().__init__()
         self.kinetic_model = maud_input.kinetic_model
@@ -330,6 +335,9 @@ class Maudy(nn.Module):
         if hasattr(maud_input, "_fdx_stoichiometry"):
             fdx = maud_input._fdx_stoichiometry
             if fdx is not None:
+                # first check if all reactions have a correct identifier to catch user typos
+                fdx_not_reac = set(fdx.keys()) - set(enzymatic_reactions)
+                assert len(fdx_not_reac) == 0, f"{fdx_not_reac} with ferredoxin not in {enzymatic_reactions}"
                 self.fdx_stoichiometry = torch.FloatTensor(
                     [fdx[r] if r in fdx else 0 for r in enzymatic_reactions]
                 )
