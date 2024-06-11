@@ -14,11 +14,13 @@ from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio_denom,
     get_competitive_inhibition_denom,
-    get_kinetic_drain,
+    get_kinetic_multi_drain,
     get_reversibility,
     get_saturation,
     get_vmax,
 )
+
+Positive = dist.constraints.positive
 
 
 class Maudy(nn.Module):
@@ -182,16 +184,6 @@ class Maudy(nn.Module):
             )
             for reac in enzymatic_reactions
         ]
-        # the same but for drains
-        assert all(
-            st < 0 for reac in drain.ids[1] for _, st in reac_st[reac].items()
-        ), "drains are not implemented for products"
-        self.sub_conc_drain_idx = [
-            torch.LongTensor(
-                [mics.index(met) for met, st in reac_st[reac].items() if st < 0]
-            )
-            for reac in drain.ids[1]
-        ]
         self.prod_conc_idx = [
             torch.LongTensor(
                 [mics.index(met) for met, st in reac_st[reac].items() if st > 0]
@@ -205,6 +197,31 @@ class Maudy(nn.Module):
         self.product_S = [
             torch.LongTensor([st for _, st in reac_st[reac].items() if st > 0])
             for reac in enzymatic_reactions
+        ]
+        # the same but for drains
+        self.sub_conc_drain_idx = [
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st < 0]
+            )
+            for reac in drain.ids[1]
+        ]
+        self.prod_conc_drain_idx = [
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st > 0]
+            )
+            for reac in drain.ids[1]
+        ]
+        self.substrate_drain_S = [
+            torch.LongTensor(
+                [-st for _, st in reac_st[reac].items() if st < 0]
+            )
+            for reac in drain.ids[1]
+        ]
+        self.product_drain_S = [
+            torch.LongTensor(
+                [st for _, st in reac_st[reac].items() if st > 0]
+            )
+            for reac in drain.ids[1]
         ]
         # the kms
         kms = self.maud_params.km.prior
@@ -497,7 +514,7 @@ class Maudy(nn.Module):
         drain = (
             pyro.deterministic(
                 "drain",
-                get_kinetic_drain(kcat_drain, conc, self.sub_conc_drain_idx, 1e-9),
+                get_kinetic_multi_drain(kcat_drain, conc, self.sub_conc_drain_idx, self.prod_conc_drain_idx, self.substrate_drain_S, self.product_drain_S, 1e-9),
             )
             if kcat_drain is not None
             else None
@@ -577,10 +594,12 @@ class Maudy(nn.Module):
                 ).to_event(1),
             )
             pyro.sample("psi", dist.Normal(-0.110, 0.01))
+            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean)
+            drain_std = pyro.param("drain_std", lambda: self.drain_std, constraint=Positive)
             _ = (
                 pyro.sample(
                     "kcat_drain",
-                    dist.Normal(self.drain_mean, self.drain_std).to_event(1),
+                    dist.Normal(drain_mean, drain_std).to_event(1),
                 )
                 if self.drain_mean.shape[1]
                 else None
