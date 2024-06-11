@@ -180,6 +180,7 @@ class ConcFdxCoder(nn.Module):
             nn.Linear(met_dims[-1], met_dims[-2]),
             nn.Sigmoid(),
             nn.Linear(met_dims[-2], 1),
+            nn.Softplus(),
         )
         # Initialize weights
         self._initialize_weights()
