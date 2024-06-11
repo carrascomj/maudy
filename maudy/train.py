@@ -36,7 +36,7 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
     pyro.enable_validation(True)
 
     # Instantiate instance of model/guide and various neural networks
-    maudy = Maudy(maud_input)
+    maudy = Maudy(maud_input, optimize_unbalanced=["pi_c", "atp_c", "adp_c"])
     # maudy.print_inputs()
     if gpu:
         maudy = maudy.cuda()

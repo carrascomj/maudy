@@ -18,7 +18,7 @@ def load(model_output: Path):
     user_input = model_output / "user_input"
     maud_input = load_maud_input(str(user_input))
     maud_input._fdx_stoichiometry = load_ferredoxin(user_input)
-    maudy = Maudy(maud_input)
+    maudy = Maudy(maud_input, optimize_unbalanced=["pi_c", "atp_c", "adp_c"])
     state_dict = torch.load(model_output / "model.pt", map_location="cpu")
     maudy.load_state_dict(state_dict["maudy"])
     optimizer = ClippedAdam({"lr": 0.006})

@@ -208,6 +208,7 @@ class AllFdxCoder(nn.Module):
         met_dims: list[int],
         reac_dims: list[int],
         km_dims: list[int],
+        **_,
     ):
         super().__init__()
         # metabolites
@@ -279,3 +280,43 @@ class AllFdxCoder(nn.Module):
         scale = self.scale_layer(out)
         fdx_contribution = self.fdx_layer(out)
         return loc, scale, fdx_contribution
+
+
+class AllFdxUnbCoder(AllFdxCoder):
+    def __init__(
+        self,
+        met_dims: list[int],
+        reac_dims: list[int],
+        km_dims: list[int],
+        unb_dims: int,
+    ):
+        super().__init__(met_dims, reac_dims, km_dims)
+        # metabolites
+        self.unb_met_loc_layer   = nn.Sequential(
+            nn.Linear(met_dims[-1], met_dims[-2]),
+            nn.ReLU(),
+            nn.Linear(met_dims[-2], unb_dims),
+        )
+
+    def forward(
+        self,
+        conc: torch.FloatTensor,
+        dgr: torch.FloatTensor,
+        enz_conc: torch.FloatTensor,
+        km: torch.FloatTensor
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
+        out = self.met_backbone(conc)
+        reac_features = torch.stack(
+            [dgr.repeat(enz_conc.shape[0]).reshape(-1, dgr.shape[0]), enz_conc], dim=1
+        )
+        reac_features = self.reac_conv(reac_features)
+        reac_features = reac_features.squeeze(1)
+        reac_out = self.reac_backbone(reac_features)
+        km_out = self.km_backbone(km.repeat(enz_conc.shape[0]).reshape(-1, km.shape[0]))
+        out = self.out_layer(torch.cat([out, reac_out, km_out], dim=-1))
+
+        loc = self.loc_layer(out)
+        scale = self.scale_layer(out)
+        fdx_contribution = self.fdx_layer(out)
+        loc_unb = self.unb_met_loc_layer(out)
+        return (loc, scale, fdx_contribution), loc_unb

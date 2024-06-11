@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import ConcCoder, AllFdxCoder
+from .black_box import ConcCoder, AllFdxCoder, AllFdxUnbCoder
 from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -22,8 +22,12 @@ from .kinetics import (
 
 
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput):
-        """Initialize the priors of the model"""
+    def __init__(self, maud_input: MaudInput, optimize_unbalanced: Optional[list[str]] = None):
+        """Initialize the priors of the model.
+
+        optimize_unbalanced: Optional[list[str]]
+            unbalanced metabolite-in-compartment identifiers to infer as the ouptut of the neural network.
+        """
         super().__init__()
         self.kinetic_model = maud_input.kinetic_model
         self.maud_params = maud_input.parameters
@@ -87,6 +91,18 @@ class Maudy(nn.Module):
         )
         unb_mics = [mic for i, mic in enumerate(mics) if i in self.unbalanced_mics_idx]
         bal_mics = [mic for i, mic in enumerate(mics) if i in self.balanced_mics_idx]
+        self.optimized_unbalanced_idx = torch.LongTensor(
+            [
+                i for i, met in enumerate(unb_mics)
+                if met in optimize_unbalanced
+            ]
+        )
+        self.non_optimized_unbalanced_idx = torch.LongTensor(
+            [
+                i for i, met in enumerate(unb_mics)
+                if met not in optimize_unbalanced
+            ]
+        )
         self.unb_conc_loc = torch.FloatTensor(
             pd.DataFrame(
                 unb_conc.location, index=unb_conc.ids[0], columns=unb_conc.ids[1]
@@ -323,10 +339,10 @@ class Maudy(nn.Module):
                 )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         # Setup the various neural networks used in the model and guide
-        NN = AllFdxCoder if self.has_fdx else ConcCoder
+        NN = AllFdxUnbCoder if len(self.optimized_unbalanced_idx.size()) != 0 else AllFdxCoder if self.has_fdx else ConcCoder
         self.concoder = NN(
             met_dims=[
-                len(self.unbalanced_mics_idx) + len(self.balanced_mics_idx),
+                self.num_mics,
                 256,
                 256,
                 256,
@@ -348,7 +364,8 @@ class Maudy(nn.Module):
                 256,
                 256,
                 16,
-            ]
+            ],
+            unb_dims=self.optimized_unbalanced_idx.shape[-1],
         )
 
     def model(
@@ -551,15 +568,6 @@ class Maudy(nn.Module):
                     enzyme_concs_param_loc, self.enzyme_concs_scale
                 ).to_event(1),
             )
-            unb_conc_param_loc = pyro.param(
-                "unb_conc_loc", self.unb_conc_loc, event_dim=1
-            )
-            unb_conc = pyro.sample(
-                "unb_conc",
-                dist.LogNormal(unb_conc_param_loc, self.unb_conc_scale).to_event(1),
-            )
-
-            conc = kcat.new_ones(len(self.experiments), self.num_mics)
             pyro.sample("psi", dist.Normal(-0.110, 0.01))
             _ = (
                 pyro.sample(
@@ -569,10 +577,20 @@ class Maudy(nn.Module):
                 if self.drain_mean.shape[1]
                 else None
             )
+            unb_conc_param_loc = pyro.param(
+                "unb_conc_loc", self.unb_conc_loc[:, self.non_optimized_unbalanced_idx], event_dim=1
+            )
+            # prepare NN conc input, remains 1 for unbalanced optiimzed mets
+            conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = self.bal_conc_loc.log()
-            conc[:, self.unbalanced_mics_idx] = unb_conc
+            conc[:, self.unbalanced_mics_idx][:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
             concoder_output = self.concoder(conc, dgr, enz_conc, km)
 
+            unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
+            unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
+            if len(self.optimized_unbalanced_idx.size()) != 0:
+                concoder_output, unb_optimized = concoder_output
+                unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = unb_optimized
             if self.has_fdx:
                 bal_conc_loc, bal_conc_scale, fdx_contr = concoder_output
                 pyro.sample(
@@ -580,6 +598,10 @@ class Maudy(nn.Module):
                 )
             else:
                 bal_conc_loc, bal_conc_scale = concoder_output
+            pyro.sample(
+                "unb_conc",
+                dist.LogNormal(unb_conc_param_loc_full, self.unb_conc_scale).to_event(1),
+            )
             pyro.sample(
                 "bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
             )
