@@ -48,6 +48,7 @@ class BaseConcCoder(nn.Module):
 
         self.emb_layer = nn.Sequential(
             nn.Linear(reac_dims[-1] + met_dims[-1] + km_dims[-1], met_dims[-2]),
+            nn.BatchNorm1d(met_dims[-2]),
             nn.ReLU(),
             nn.Linear(met_dims[-2], met_dims[-1]),
         )
@@ -55,6 +56,7 @@ class BaseConcCoder(nn.Module):
             [
                 nn.Sequential(  # loc layer
                     nn.Linear(met_dims[-1], met_dims[-2]),
+                    nn.BatchNorm1d(met_dims[-2]),
                     nn.ReLU(),
                     nn.Linear(met_dims[-2], met_dims[-1]),
                 ),
