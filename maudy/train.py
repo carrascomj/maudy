@@ -32,7 +32,7 @@ def log_cosine_schedule(start_value: float, end_value: float, iterations: int, m
     return schedule
 
 
-def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool):
+def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: bool, eval_conc: bool):
     pyro.clear_param_store()
     # Enable optional validation warnings
     pyro.enable_validation(False)
@@ -44,7 +44,11 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool):
     if torch.cuda.is_available():
         maudy.cuda()
         penalization_temp = penalization_temp.cuda()
-    obs_fluxes, obs_conc = maudy.get_obs()
+    obs_flux, obs_conc = maudy.get_obs()
+    if not eval_flux:
+        obs_flux = None
+    if not eval_conc:
+        obs_conc = None
 
     # Setup an optimizer (Adam) and learning rate scheduler.
     # We start with a moderately high learning rate (0.006) and
@@ -63,7 +67,7 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool):
 
     progress_bar = tqdm(penalization_temp, total=num_epochs, desc="Training", unit="epoch")
     for penalization_ss in progress_bar:
-        loss = svi.step(obs_fluxes, obs_conc, penalization_ss if penalize_ss else False)
+        loss = svi.step(obs_flux, obs_conc, penalization_ss if penalize_ss else False)
         lr = list(optimizer.get_state().values())[0]["param_groups"][0]["lr"]
         progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}", ss=f"{penalization_ss:.2e}")
     return maudy, optimizer
@@ -88,12 +92,14 @@ def sample(
     num_epochs: int = 100,
     out_dir: Optional[Path] = None,
     penalize_ss: bool = True,
+    eval_flux: bool = True,
+    eval_conc: bool = True,
     smoke: bool = False,
 ):
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
     maud_input._fdx_stoichiometry = load_ferredoxin(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss=penalize_ss)
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc)
     if smoke:
         return
     out = (

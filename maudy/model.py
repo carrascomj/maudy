@@ -393,7 +393,7 @@ class Maudy(nn.Module):
 
     def model(
         self,
-        obs_fluxes: Optional[torch.FloatTensor] = None,
+        obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
         penalize_ss: Union[bool, float] = True,
     ):
@@ -527,7 +527,7 @@ class Maudy(nn.Module):
             pyro.sample(
                 "y_flux_train",
                 dist.Normal(true_obs_flux, self.obs_fluxes_std).to_event(1),
-                obs=obs_fluxes,
+                obs=obs_flux,
             )
             pyro.sample(
                 "y_conc_train",
@@ -548,7 +548,7 @@ class Maudy(nn.Module):
     # The guide specifies the variational distribution
     def guide(
         self,
-        obs_fluxes: Optional[torch.FloatTensor] = None,
+        obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
         penalize_ss: bool = True,
     ):
@@ -600,8 +600,7 @@ class Maudy(nn.Module):
             drain_std = pyro.param("drain_std", lambda: self.drain_std, constraint=Positive)
             _ = (
                 pyro.sample(
-                    "kcat_drain",
-                    dist.Normal(drain_mean, drain_std).to_event(1),
+                    "kcat_drain", dist.Normal(drain_mean, drain_std).to_event(1),
                 )
                 if self.drain_mean.shape[1]
                 else None
