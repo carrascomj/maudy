@@ -107,7 +107,7 @@ def get_kinetic_multi_drain(
     product_S: list[Vector],
     drain_small_conc_corrector: float,
 ):
-    """Multiply both terms to avoid having negative concentrations."""
+    """Multiply subs and prods to avoid having negative concentrations."""
     sub_contr = torch.stack(
         [
             (
@@ -133,3 +133,23 @@ def get_kinetic_multi_drain(
         dim=1,
     )
     return kcat_drain * sub_contr * prod_contr
+
+
+def get_allostery(
+    conc: Vector,
+    free_enzyme_ratio: Vector,
+    transfer: Vector,      # only one per enzyme
+    dissociation: Vector,  # only one per enzyme (either act or inh)
+    is_activation: torch.BoolTensor,  # 1 if act; 0 if inh
+    reac_idx: torch.LongTensor,    # index of corresponding reactions
+    conc_idx: ReacIndex,
+    subunits: Vector,
+):
+    out = torch.ones_like(free_enzyme_ratio)
+    allostery = conc[:, conc_idx] / dissociation
+    act_denom = 1.0 + is_activation * allostery 
+    inh_num = 1.0 + ~is_activation * allostery
+    out[..., reac_idx] = 1 / (
+        1 + transfer * (free_enzyme_ratio[..., reac_idx] * inh_num / act_denom) ** subunits
+    )
+    return out

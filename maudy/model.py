@@ -11,6 +11,7 @@ from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from .black_box import BaseConcCoder, fdx_head, unb_opt_head
 from .kinetics import (
+    get_allostery,
     get_dgr,
     get_free_enzyme_ratio_denom,
     get_competitive_inhibition_denom,
@@ -256,10 +257,24 @@ class Maudy(nn.Module):
             )
             for enz, reac in zip(enzymes, enzymatic_reactions)
         ]
+        # verify that the indices are at least injective
+        all_sub_idx = [
+            conc_idx for reac_idx in self.sub_km_idx for conc_idx in reac_idx
+        ]
+        all_prod_idx = [
+            conc_idx for reac_idx in self.prod_km_idx for conc_idx in reac_idx
+        ]
+        assert len(all_sub_idx) == len(
+            set(all_sub_idx)
+        ), "The indexing on the Km values went wrong for the substrates"
+        assert len(all_prod_idx) == len(
+            set(all_prod_idx)
+        ), "The indexing on the Km values went wrong for the products"
         # competitive inhibition
         kis = self.maud_params.ki.prior
         self.has_ci = False
         if kis.location:
+            self.has_ci = True
             ki_map = defaultdict(list)
             for i, ki_id in enumerate(kis.ids[0]):
                 enzyme, _, mic = ki_id.split("_", 2)
@@ -278,20 +293,40 @@ class Maudy(nn.Module):
                 )
                 for enz in enzymes
             ]
-            self.has_ci = True
-        # verify that the indices are at least injective
-        all_sub_idx = [
-            conc_idx for reac_idx in self.sub_km_idx for conc_idx in reac_idx
-        ]
-        all_prod_idx = [
-            conc_idx for reac_idx in self.prod_km_idx for conc_idx in reac_idx
-        ]
-        assert len(all_sub_idx) == len(
-            set(all_sub_idx)
-        ), "The indexing on the Km values went wrong for the substrates"
-        assert len(all_prod_idx) == len(
-            set(all_prod_idx)
-        ), "The indexing on the Km values went wrong for the products"
+        # allostery
+        dc = self.maud_params.dissociation_constant.prior
+        tc = self.maud_params.transfer_constant.prior
+        self.has_allostery = False
+        if dc.location:
+            self.has_allostery = True
+            dc_map = {}
+            for dc_id in dc.ids[0]:
+                enzyme, met, comp, atype = dc_id.split("_", 3)
+                dc_map[enzyme] = (enzymes.index(enzyme), mics.index(f"{met}_{comp}"), atype)
+            self.dc_loc = torch.FloatTensor(dc.location)
+            self.dc_scale = torch.FloatTensor(dc.scale)
+            self.tc_loc = torch.FloatTensor(tc.location)
+            self.tc_scale = torch.FloatTensor(tc.scale)
+            self.allostery_idx = torch.LongTensor([
+                dc_map[enz][0] for enz in enzymes if enz in dc_map
+            ])
+            self.conc_allostery_idx = torch.LongTensor([
+                dc_map[enz][1] for enz in enzymes if enz in dc_map
+            ])
+            self.allostery_activation = torch.BoolTensor([
+                dc_map[enz][2] == "activation" for enz in enzymes if enz in dc_map
+            ])
+            self.subunits = torch.IntTensor(
+                [
+                    next(
+                        kin_enz.subunits
+                        for kin_enz in self.kinetic_model.enzymes
+                        if kin_enz.id == enz
+                    )
+                    for enz in enzymes
+                    if enz in dc_map
+                ]
+            )
 
         self.obs_fluxes = torch.FloatTensor(
             [
@@ -427,6 +462,9 @@ class Maudy(nn.Module):
         km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
         if self.has_ci:
             ki = pyro.sample("ki", dist.LogNormal(self.ki_loc, self.ki_scale).to_event(1))
+        if self.has_allostery:
+            dc = pyro.sample("dc", dist.LogNormal(self.dc_loc, self.dc_scale).to_event(1))
+            tc = pyro.sample("tc", dist.LogNormal(self.tc_loc, self.tc_scale).to_event(1))
 
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
@@ -477,7 +515,13 @@ class Maudy(nn.Module):
             self.substrate_S,
             self.product_S,
         )
-        free_enz_ki_denom = get_competitive_inhibition_denom(conc, ki, self.ki_conc_idx, self.ki_idx) if self.has_ci else 0
+        free_enz_ki_denom = pyro.deterministic("ci",
+            get_competitive_inhibition_denom(
+            conc,
+            ki,
+            self.ki_conc_idx,
+            self.ki_idx,
+        )) if self.has_ci else 0
         free_enzyme_ratio = pyro.deterministic(
             "free_enzyme_ratio",
             1 / (free_enz_km_denom + free_enz_ki_denom),
@@ -495,7 +539,17 @@ class Maudy(nn.Module):
                 conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
             ),
         )
-        flux = pyro.deterministic("flux", vmax * rev * sat).reshape(
+        allostery = pyro.deterministic("allostery", get_allostery(
+            conc,
+            free_enzyme_ratio,
+            tc,
+            dc,
+            self.allostery_activation,
+            self.allostery_idx,
+            self.conc_allostery_idx,
+            self.subunits,
+        )) if self.has_allostery else torch.ones_like(vmax)
+        flux = pyro.deterministic("flux", vmax * rev * sat * allostery).reshape(
             len(self.experiments), len(self.sub_km_idx)
         )
         true_obs_flux = flux[self.obs_fluxes_idx]
@@ -583,6 +637,13 @@ class Maudy(nn.Module):
             ki_loc = pyro.param("ki_loc", self.ki_loc)
             ki_scale = pyro.param("ki_scale", self.ki_scale, Positive)
             pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
+        if self.has_allostery:
+            dc_loc = pyro.param("dc_loc", self.dc_loc)
+            dc_scale = pyro.param("dc_scale", self.dc_scale, Positive)
+            tc_loc = pyro.param("tc_loc", self.tc_loc)
+            tc_scale = pyro.param("tc_scale", self.tc_scale, Positive)
+            pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
+            pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
             enzyme_concs_param_loc = pyro.param(
