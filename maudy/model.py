@@ -23,6 +23,13 @@ from .kinetics import (
 Positive = dist.constraints.positive
 
 
+def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    mu2 = mu.pow(2)
+    sigma_sq = (scale.exp() - 1) * mu2
+    loc = torch.log(mu.pow(2) / torch.sqrt(mu2 + sigma_sq.pow(2)))
+    return loc
+
+
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, optimize_unbalanced: Optional[list[str]] = None):
         """Initialize the priors of the model.
@@ -135,7 +142,7 @@ class Maudy(nn.Module):
         for exp in self.maud_params.experiments:
             for meas in exp.initial_state:
                 conc_inits[(exp.id, meas.target_id)] = (meas.value, 1.0)
-        self.bal_conc_loc = torch.FloatTensor(
+        bal_conc_mu = torch.FloatTensor(
             [
                 [
                     conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
@@ -153,6 +160,7 @@ class Maudy(nn.Module):
                 for exp in self.experiments
             ]
         )
+        self.bal_conc_loc = get_loc_from_mu_scale(bal_conc_mu, self.bal_conc_scale)
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
         self.S = torch.FloatTensor(S.values)
         # S matrix only for stoichoimetric reactions (to calculate saturation and drG)
@@ -444,7 +452,7 @@ class Maudy(nn.Module):
             psi = pyro.sample("psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01)))
             bal_conc = pyro.sample(
                 "bal_conc",
-                dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(
+                dist.LogNormal(self.bal_conc_loc, self.bal_conc_scale).to_event(
                     1
                 ),
             )
@@ -530,7 +538,7 @@ class Maudy(nn.Module):
             if penalize_ss or isinstance(penalize_ss, float):
                 pyro.sample(
                     "steady_state_dev",
-                    dist.Normal(self.float_tensor([0]), float(penalize_ss) * self.bal_conc_loc.abs()).to_event(1),
+                    dist.Normal(self.float_tensor([0]), float(penalize_ss) * self.bal_conc_loc.exp()).to_event(1),
                     obs=ssd,
                 )
 
@@ -603,7 +611,7 @@ class Maudy(nn.Module):
             )
             # prepare NN conc input, remains 1 for unbalanced optiimzed mets
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = self.bal_conc_loc.log()
+            conc[:, self.balanced_mics_idx] = self.bal_conc_loc
             conc[:, self.unbalanced_mics_idx][:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
             concoder_output = self.concoder(conc, dgr, enz_conc, km)
 
