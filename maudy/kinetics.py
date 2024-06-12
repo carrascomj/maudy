@@ -52,7 +52,7 @@ def get_free_enzyme_ratio_denom(
         [
             ((1.0 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1) - 1.0
             if km_idx.size(0)
-            else torch.zeros(conc.shape[0], 1)  # if irr: no km for prods: no prod_contr
+            else torch.zeros(conc.shape[0])  # if irr: no km for prods: no prod_contr
             for conc_idx, km_idx, st in zip(prod_conc_idx, prod_km_idx, product_S)
         ],
         dim=1,
@@ -110,18 +110,24 @@ def get_kinetic_multi_drain(
     """Multiply both terms to avoid having negative concentrations."""
     sub_contr = torch.stack(
         [
-            ((conc[:, conc_idx] / (conc[:, conc_idx] + drain_small_conc_corrector)) ** st).prod(
-                dim=-1
-            ) if conc_idx.size(0) else torch.ones(kcat_drain.shape[0])
+            (
+                (conc[:, conc_idx] / (conc[:, conc_idx] + drain_small_conc_corrector))
+                ** st
+            ).prod(dim=-1)
+            if conc_idx.size(0)
+            else torch.ones(kcat_drain.shape[0])
             for conc_idx, st in zip(sub_conc_idx, substrate_S)
         ],
         dim=1,
     )
     prod_contr = torch.stack(
         [
-            ((conc[:, conc_idx] / (conc[:, conc_idx] + drain_small_conc_corrector)) ** st).prod(
-                dim=-1
-            ) if conc_idx.size(0) else torch.ones(kcat_drain.shape[0])
+            (
+                (conc[:, conc_idx] / (conc[:, conc_idx] + drain_small_conc_corrector))
+                ** st
+            ).prod(dim=-1)
+            if conc_idx.size(0)
+            else torch.ones(kcat_drain.shape[0])
             for conc_idx, st in zip(prod_conc_idx, product_S)
         ],
         dim=1,
