@@ -32,17 +32,18 @@ def log_cosine_schedule(start_value: float, end_value: float, iterations: int, m
     return schedule
 
 
-def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool = False):
+def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool):
     pyro.clear_param_store()
     # Enable optional validation warnings
-    pyro.enable_validation(True)
+    pyro.enable_validation(False)
 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input, optimize_unbalanced=["pi_c", "atp_c", "adp_c"])
     # maudy.print_inputs()
-    if gpu:
-        maudy = maudy.cuda()
-
+    penalization_temp = log_cosine_schedule(1, 1e-5, num_epochs, 1e-3)
+    if torch.cuda.is_available():
+        maudy.cuda()
+        penalization_temp = penalization_temp.cuda()
     obs_fluxes, obs_conc = maudy.get_obs()
 
     # Setup an optimizer (Adam) and learning rate scheduler.
@@ -59,7 +60,6 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
     # for automatic enumeration of the discrete latent variable y.
     elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
-    penalization_temp = log_cosine_schedule(1, 1e-5, num_epochs, 1e-3)
 
     progress_bar = tqdm(penalization_temp, total=num_epochs, desc="Training", unit="epoch")
     for penalization_ss in progress_bar:

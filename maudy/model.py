@@ -363,10 +363,10 @@ class Maudy(nn.Module):
                     [self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0
                 )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
-        # Setup the various neural networks used in the model and guide
+        # Setup the various neural networks used in guide
         nn =  BaseConcCoder(
-            met_dims=[self.num_mics, 2048, 2048, 2048, 2048, len(self.balanced_mics_idx)],
-            reac_dims=[len(enzymatic_reactions), 256, 256, 256, 256, 16],
+            met_dims=[self.num_mics, 256, 256, 256, 256, len(self.balanced_mics_idx)],
+            reac_dims=[len(enzymatic_reactions), 256, 256, 256, 16],
             km_dims=[len(self.km_loc), 256, 256, 16],
         )
         if self.has_fdx:
@@ -375,6 +375,13 @@ class Maudy(nn.Module):
             unb_opt_head(nn, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn
 
+    def cuda(self):
+        super().cuda()
+        for key in self.__dict__.keys():
+            if isinstance(self.__dict__[key], torch.Tensor):
+                self.__dict__[key] = self.__dict__[key].cuda()
+            if isinstance(self.__dict__[key], list):
+                self.__dict__[key] = [x.cuda() if isinstance(x, torch.Tensor) else x for x in self.__dict__[key]]
 
     def model(
         self,
@@ -397,7 +404,7 @@ class Maudy(nn.Module):
         fdx_contr = (
             pyro.sample("fdx_contr", dist.Normal(77, 1))
             if self.has_fdx
-            else torch.FloatTensor([0])
+            else self.float_tensor([0.0])
         )
         dgr = pyro.deterministic(
             "dgr",
@@ -434,7 +441,7 @@ class Maudy(nn.Module):
                 else None
             )
             # TODO: need to take this from the config
-            psi = pyro.sample("psi", dist.Normal(-0.110, 0.01))
+            psi = pyro.sample("psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01)))
             bal_conc = pyro.sample(
                 "bal_conc",
                 dist.LogNormal(self.bal_conc_loc.log(), self.bal_conc_scale).to_event(
@@ -448,7 +455,7 @@ class Maudy(nn.Module):
                 fdx_ratio = pyro.sample(
                     "fdx_ratio",
                     dist.LogNormal(
-                        torch.FloatTensor([1.0]), torch.FloatTensor([0.7])
+                        self.float_tensor([1.0]), self.float_tensor([0.7])
                     ).to_event(1),
                 )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
@@ -523,9 +530,12 @@ class Maudy(nn.Module):
             if penalize_ss or isinstance(penalize_ss, float):
                 pyro.sample(
                     "steady_state_dev",
-                    dist.Normal(0, float(penalize_ss) * self.bal_conc_loc.abs()).to_event(1),
+                    dist.Normal(self.float_tensor([0]), float(penalize_ss) * self.bal_conc_loc.abs()).to_event(1),
                     obs=ssd,
                 )
+
+    def float_tensor(self, x) -> torch.Tensor:
+        return torch.tensor(x, device=self.water_stoichiometry.device)
 
     # The guide specifies the variational distribution
     def guide(
@@ -540,12 +550,12 @@ class Maudy(nn.Module):
         dgf = pyro.sample(
             "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
-        fdx_contr_loc = pyro.param("fdx_contr_loc", torch.Tensor([77]))
-        fdx_contr_scale = pyro.param("fdx_contr_scale", torch.Tensor([1]), constraint=Positive)
+        fdx_contr_loc = pyro.param("fdx_contr_loc", self.float_tensor([77.0]))
+        fdx_contr_scale = pyro.param("fdx_contr_scale", self.float_tensor([1.0]), constraint=Positive)
         fdx_contr = (
             pyro.sample("fdx_contr", dist.Normal(fdx_contr_loc, fdx_contr_scale))
             if any(st != 0 for st in self.fdx_stoichiometry)
-            else torch.FloatTensor([0])
+            else self.float_tensor([0.0])
         )
         kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
         kcat = pyro.sample(
@@ -576,7 +586,7 @@ class Maudy(nn.Module):
                     enzyme_concs_param_loc, self.enzyme_concs_scale
                 ).to_event(1),
             )
-            psi_mean = pyro.param("psi_mean", torch.Tensor([-0.110]))
+            psi_mean = pyro.param("psi_mean", self.float_tensor([-0.110]))
             pyro.sample("psi", dist.Normal(psi_mean, 0.01))
             drain_mean = pyro.param("drain_mean", lambda: self.drain_mean)
             drain_std = pyro.param("drain_std", lambda: self.drain_std, constraint=Positive)
