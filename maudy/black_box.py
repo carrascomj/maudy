@@ -19,7 +19,7 @@ class BaseConcCoder(nn.Module):
         self.met_backbone = nn.Sequential(
             *[
                 nn.Sequential(
-                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                    nn.Linear(in_dim, out_dim), nn.ReLU()
                 )
                 for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
             ]
@@ -28,7 +28,7 @@ class BaseConcCoder(nn.Module):
         self.reac_backbone = nn.Sequential(
             *[
                 nn.Sequential(
-                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                    nn.Linear(in_dim, out_dim), nn.ReLU()
                 )
                 for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
             ]
@@ -40,7 +40,7 @@ class BaseConcCoder(nn.Module):
         self.km_backbone = nn.Sequential(
             *[
                 nn.Sequential(
-                    nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU()
+                    nn.Linear(in_dim, out_dim), nn.ReLU()
                 )
                 for in_dim, out_dim in zip(km_dims[:-1], km_dims[1:])
             ]
@@ -48,7 +48,6 @@ class BaseConcCoder(nn.Module):
 
         self.emb_layer = nn.Sequential(
             nn.Linear(reac_dims[-1] + met_dims[-1] + km_dims[-1], met_dims[-2]),
-            nn.BatchNorm1d(met_dims[-2]),
             nn.ReLU(),
             nn.Linear(met_dims[-2], met_dims[-1]),
         )
@@ -56,7 +55,6 @@ class BaseConcCoder(nn.Module):
             [
                 nn.Sequential(  # loc layer
                     nn.Linear(met_dims[-1], met_dims[-2]),
-                    nn.BatchNorm1d(met_dims[-2]),
                     nn.ReLU(),
                     nn.Linear(met_dims[-2], met_dims[-1]),
                 ),
@@ -81,6 +79,7 @@ class BaseConcCoder(nn.Module):
         reac_out = self.reac_backbone(reac_features)
         km_out = self.km_backbone(km.repeat(enz_conc.shape[0]).reshape(-1, km.shape[0]))
         out = self.emb_layer(torch.cat([out, reac_out, km_out], dim=-1))
+        out = (out - torch.mean(out)) / torch.std(out)
         return [out_layer(out) for out_layer in self.out_layers]
 
 
