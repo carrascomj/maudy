@@ -66,7 +66,6 @@ def report_to_dfs(
         if meas.target_type == MeasurementType.MIC
     }
     kcat_pars = maudy.maud_params.kcat.prior
-    # we have to this splits because this maud is wrong...
     enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
     across_exps = {var_name: [] for var_name in var_names}
     for i, experiment in enumerate(maudy.experiments):
@@ -112,6 +111,7 @@ def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[A
 
 
 def ppc(model_output: Path, num_epochs: int = 800):
+    """Run posterior predictive check and report it."""
     var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr")
     maudy, _ = load(model_output)
     samples = predict(maudy, num_epochs, var_names=var_names)
@@ -120,4 +120,3 @@ def ppc(model_output: Path, num_epochs: int = 800):
     for var_name, df in gathered_samples.items():
         print(f"### {var_name} ###")
         print(df)
-        
