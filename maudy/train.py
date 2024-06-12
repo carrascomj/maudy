@@ -18,7 +18,7 @@ from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
 
 
-def log_cosine_schedule(start_value: float, end_value: float, iterations: int) -> torch.Tensor:
+def log_cosine_schedule(start_value: float, end_value: float, iterations: int, min_value: float = float("-inf")) -> torch.Tensor:
     """Compute a log cosine schedule between `start_value` and `end_value` over `iterations`."""
     assert iterations > 0, ValueError("Number of iterations must be greater than 0.")  
     log_start = np.log10(start_value)
@@ -27,7 +27,9 @@ def log_cosine_schedule(start_value: float, end_value: float, iterations: int) -
     cos_values = (1 + np.cos(np.pi * t)) / 2
     log_schedule = log_end + (log_start - log_end) * cos_values
     # Convert back from log10 scale
-    return torch.FloatTensor(10 ** log_schedule)
+    schedule = torch.FloatTensor(10 ** log_schedule)
+    schedule[schedule < min_value] = min_value
+    return schedule
 
 
 def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool = False):
@@ -57,7 +59,7 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, gpu: bool =
     # for automatic enumeration of the discrete latent variable y.
     elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
-    penalization_temp = log_cosine_schedule(1, 1e-5, num_epochs)
+    penalization_temp = log_cosine_schedule(1, 1e-5, num_epochs, 1e-3)
 
     progress_bar = tqdm(penalization_temp, total=num_epochs, desc="Training", unit="epoch")
     for penalization_ss in progress_bar:
