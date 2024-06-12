@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import ConcCoder, AllFdxCoder, AllFdxUnbCoder
+from .black_box import BaseConcCoder, fdx_head, unb_opt_head
 from .kinetics import (
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -364,32 +364,17 @@ class Maudy(nn.Module):
                 )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         # Setup the various neural networks used in the model and guide
-        NN = AllFdxUnbCoder if len(self.optimized_unbalanced_idx.size()) != 0 else AllFdxCoder if self.has_fdx else ConcCoder
-        self.concoder = NN(
-            met_dims=[
-                self.num_mics,
-                2048,
-                2048,
-                2048,
-                2048,
-                len(self.balanced_mics_idx),
-            ],
-            reac_dims=[
-                len(enzymatic_reactions),
-                256,
-                256,
-                256,
-                256,
-                16,
-            ],
-            km_dims=[
-                len(self.km_loc),
-                256,
-                256,
-                16,
-            ],
-            unb_dims=self.optimized_unbalanced_idx.shape[-1],
+        nn =  BaseConcCoder(
+            met_dims=[self.num_mics, 2048, 2048, 2048, 2048, len(self.balanced_mics_idx)],
+            reac_dims=[len(enzymatic_reactions), 256, 256, 256, 256, 16],
+            km_dims=[len(self.km_loc), 256, 256, 16],
         )
+        if self.has_fdx:
+            fdx_head(nn)
+        if len(self.optimized_unbalanced_idx.size()) != 0:
+            unb_opt_head(nn, unb_dim=self.optimized_unbalanced_idx.shape[-1])
+        self.concoder = nn
+
 
     def model(
         self,
@@ -614,16 +599,16 @@ class Maudy(nn.Module):
 
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
+            # in reverse order that additional head outputs may have been added
             if len(self.optimized_unbalanced_idx.size()) != 0:
-                concoder_output, unb_optimized = concoder_output
+                unb_optimized = concoder_output.pop()
                 unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = unb_optimized
             if self.has_fdx:
-                bal_conc_loc, bal_conc_scale, fdx_contr = concoder_output
+                fdx_contr = concoder_output.pop()
                 pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
                 )
-            else:
-                bal_conc_loc, bal_conc_scale = concoder_output
+            bal_conc_loc, bal_conc_scale = concoder_output
             pyro.sample(
                 "unb_conc",
                 dist.LogNormal(unb_conc_param_loc_full, self.unb_conc_scale).to_event(1),
