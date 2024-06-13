@@ -412,8 +412,8 @@ class Maudy(nn.Module):
             reac_dims=[len(enzymatic_reactions), 256, 256, 256, 16],
             km_dims=[len(self.km_loc), 256, 256, 16],
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
-            ki_dim=self.ki_loc.shape[0],
-            tc_dim=self.tc_loc.shape[0],
+            ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
+            tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
         )
         if self.has_fdx:
             fdx_head(nn)
@@ -598,7 +598,7 @@ class Maudy(nn.Module):
                     penalize_ss
                     * (
                         self.bal_conc_mu.clamp(self.bal_conc_mu[:, self.obs_conc_idx].min(), None)
-                        / (ssd.abs() + 1e-7)
+                        / (ssd.abs() + 1e-11)
                     )
                     .clamp(1e-6, 1e3)
                     .sum(),

@@ -1,6 +1,5 @@
 """Neural networks used in the guide to approximate the ODE solver."""
 
-from typing import Optional
 import torch
 import torch.nn as nn
 
@@ -76,7 +75,7 @@ class BaseConcCoder(nn.Module):
         )
         enz_reac_features = self.reac_conv(enz_reac_features)
         enz_reac_features = enz_reac_features.squeeze(1)
-        reac_out = self.reac_backbone(torch.cat([enz_reac_features, drains]))
+        reac_out = self.reac_backbone(torch.cat([enz_reac_features, drains], dim=-1))
         km_out = self.km_backbone(km.repeat(enz_conc.shape[0]).reshape(-1, km.shape[0]))
         out = self.emb_layer(
             torch.cat(
@@ -89,7 +88,7 @@ class BaseConcCoder(nn.Module):
                 dim=-1,
             )
         )
-        out = (out - torch.mean(out, dim=-1)) / torch.std(out)
+        out = (out - torch.mean(out, dim=-1).unsqueeze(1)) / torch.std(out)
         return [out_layer(out) for out_layer in self.out_layers]
 
 
