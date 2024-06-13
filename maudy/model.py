@@ -407,10 +407,13 @@ class Maudy(nn.Module):
                 )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         # Setup the various neural networks used in guide
-        nn =  BaseConcCoder(
+        nn = BaseConcCoder(
             met_dims=[self.num_mics, 256, 256, 256, 256, len(self.balanced_mics_idx)],
             reac_dims=[len(enzymatic_reactions), 256, 256, 256, 16],
             km_dims=[len(self.km_loc), 256, 256, 16],
+            drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
+            ki_dim=self.ki_loc.shape[0],
+            tc_dim=self.tc_loc.shape[0],
         )
         if self.has_fdx:
             fdx_head(nn)
@@ -636,14 +639,14 @@ class Maudy(nn.Module):
         if self.has_ci:
             ki_loc = pyro.param("ki_loc", self.ki_loc)
             ki_scale = pyro.param("ki_scale", self.ki_scale, Positive)
-            pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
+            ki = pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
         if self.has_allostery:
             dc_loc = pyro.param("dc_loc", self.dc_loc)
             dc_scale = pyro.param("dc_scale", self.dc_scale, Positive)
             tc_loc = pyro.param("tc_loc", self.tc_loc)
             tc_scale = pyro.param("tc_scale", self.tc_scale, Positive)
-            pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
-            pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
+            dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
+            tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
         exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
         with exp_plate:
             enzyme_concs_param_loc = pyro.param(
@@ -659,12 +662,12 @@ class Maudy(nn.Module):
             pyro.sample("psi", dist.Normal(psi_mean, 0.01))
             drain_mean = pyro.param("drain_mean", lambda: self.drain_mean)
             drain_std = pyro.param("drain_std", lambda: self.drain_std, constraint=Positive)
-            _ = (
+            kcat_drain = (
                 pyro.sample(
                     "kcat_drain", dist.Normal(drain_mean, drain_std).to_event(1),
                 )
                 if self.drain_mean.shape[1]
-                else None
+                else self.float_tensor([])
             )
             unb_conc_param_loc = pyro.param(
                 "unb_conc_loc", self.unb_conc_loc[:, self.non_optimized_unbalanced_idx], event_dim=1
@@ -673,7 +676,13 @@ class Maudy(nn.Module):
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = self.bal_conc_loc
             conc[:, self.unbalanced_mics_idx][:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
-            concoder_output = self.concoder(conc, dgr, enz_conc, km)
+            # possibly gather dc, tc and ki for inputs of neural network
+            rest = self.float_tensor([])
+            if self.has_ci:
+                rest = ki
+            if self.has_allostery:
+                rest = torch.cat([rest, tc, dc])
+            concoder_output = self.concoder(conc, dgr, enz_conc, kcat, kcat_drain, km, rest)
 
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
