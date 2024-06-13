@@ -119,4 +119,7 @@ def ppc(model_output: Path, num_epochs: int = 800):
     gathered_samples = report_to_dfs(maudy, samples, var_names=list(var_names))
     for var_name, df in gathered_samples.items():
         print(f"### {var_name} ###")
+        if var_name == "dgr":
+            df = df.loc[df.experiment==df.experiment.iloc[0], :]
+            del df["experiment"]
         print(df)
