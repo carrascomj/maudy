@@ -40,7 +40,7 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input, optimize_unbalanced=["pi_c", "atp_c", "adp_c"])
     # maudy.print_inputs()
-    penalization_temp = log_cosine_schedule(1, 1e-5, num_epochs, 1e-3)
+    penalization_temp = log_cosine_schedule(0.001, 0.1, num_epochs, 0.001)
     if torch.cuda.is_available():
         maudy.cuda()
         penalization_temp = penalization_temp.cuda()

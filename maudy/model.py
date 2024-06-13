@@ -143,7 +143,7 @@ class Maudy(nn.Module):
         for exp in self.maud_params.experiments:
             for meas in exp.initial_state:
                 conc_inits[(exp.id, meas.target_id)] = (meas.value, 1.0)
-        bal_conc_mu = torch.FloatTensor(
+        self.bal_conc_mu = torch.FloatTensor(
             [
                 [
                     conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
@@ -161,7 +161,7 @@ class Maudy(nn.Module):
                 for exp in self.experiments
             ]
         )
-        self.bal_conc_loc = get_loc_from_mu_scale(bal_conc_mu, self.bal_conc_scale)
+        self.bal_conc_loc = get_loc_from_mu_scale(self.bal_conc_mu, self.bal_conc_scale)
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
         self.S = torch.FloatTensor(S.values)
         # S matrix only for stoichoimetric reactions (to calculate saturation and drG)
@@ -578,7 +578,7 @@ class Maudy(nn.Module):
             torch.cat([drain, flux], dim=1) if drain is not None else flux
         ).clamp(-1e14, 1)
         ssd = (
-            pyro.deterministic("ssd", all_flux @ self.S.T[:, self.balanced_mics_idx])
+            pyro.deterministic("ssd", all_flux.clamp(-10, 10) @ self.S.T[:, self.balanced_mics_idx])
         )
         with exp_plate:
             pyro.sample(
@@ -593,10 +593,15 @@ class Maudy(nn.Module):
             )
             # steady state penalization
             if penalize_ss or isinstance(penalize_ss, float):
-                pyro.sample(
+                pyro.factor(
                     "steady_state_dev",
-                    dist.Normal(self.float_tensor([0]), float(penalize_ss) * self.bal_conc_loc.exp()).to_event(1),
-                    obs=ssd,
+                    penalize_ss
+                    * (
+                        self.bal_conc_mu.clamp(self.bal_conc_mu[:, self.obs_conc_idx].min(), None)
+                        / (ssd.abs() + 1e-7)
+                    )
+                    .clamp(1e-6, 1e3)
+                    .sum(),
                 )
 
     def float_tensor(self, x) -> torch.Tensor:
