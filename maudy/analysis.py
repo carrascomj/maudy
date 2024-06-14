@@ -73,14 +73,19 @@ def report_to_dfs(
             this_dict = {}
             for key, items in pred_summary[var_name].items():
                 this_dict[key] = items[i] if var_name != "dgr" else items.squeeze(0)
+            if var_name == "flux":
+                print(f"{pred_summary['flux']=}")
+                print(f"{this_dict=}")
+                print(f"{enzymatic_reactions=}")
+            print(f"{var_name=}")
             df = pd.DataFrame(
                 this_dict,
                 index=obs_fluxes
                 if var_name == "y_flux_train"
                 else unbalanced_mics
                 if "unb" in var_name
-                else balanced_mics
-                if "dgr" != var_name else enzymatic_reactions,
+                else enzymatic_reactions
+                if var_name in ["dgr", "flux"] else balanced_mics,
             )
             df["experiment"] = experiment
             across_exps[var_name].append(df)
@@ -112,10 +117,12 @@ def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[A
 
 def ppc(model_output: Path, num_epochs: int = 800):
     """Run posterior predictive check and report it."""
-    var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr")
+    var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr", "flux")
     maudy, _ = load(model_output)
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)
+    if "flux" in samples:
+        samples["flux"] = samples["flux"].squeeze(1)
     gathered_samples = report_to_dfs(maudy, samples, var_names=list(var_names))
     for var_name, df in gathered_samples.items():
         print(f"### {var_name} ###")
