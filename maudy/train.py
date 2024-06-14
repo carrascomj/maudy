@@ -7,15 +7,16 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 import pyro
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
 from pyro.optim import ClippedAdam
 from tqdm import tqdm
-from .model import Maudy
 from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
+
+from .io import load_maudy_config
+from .model import Maudy
 
 
 def log_cosine_schedule(start_value: float, end_value: float, iterations: int, min_value: float = float("-inf")) -> torch.Tensor:
@@ -38,7 +39,7 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: 
     pyro.enable_validation(False)
 
     # Instantiate instance of model/guide and various neural networks
-    maudy = Maudy(maud_input, optimize_unbalanced=["pi_c", "atp_c", "adp_c"])
+    maudy = Maudy(maud_input)
     # maudy.print_inputs()
     penalization_temp = log_cosine_schedule(0.001, 0.1, num_epochs, 0.001)
     if torch.cuda.is_available():
@@ -77,16 +78,6 @@ def get_timestamp():
     return datetime.now().isoformat().replace(":", "").replace("-", "").replace(".", "")
 
 
-def load_ferredoxin(maud_dir: Path) -> Optional[dict[str, float]]:
-    ferre_path = maud_dir / "ferredoxin.txt"
-    if ferre_path.exists():
-        return (
-            pd.read_csv(ferre_path, sep=",", names=["reaction", "stoichiometry"])
-            .set_index("reaction")
-            .to_dict()["stoichiometry"]
-        )
-
-
 def sample(
     maud_dir: Path,
     num_epochs: int = 100,
@@ -98,7 +89,7 @@ def sample(
 ):
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
-    maud_input._fdx_stoichiometry = load_ferredoxin(maud_dir)
+    maud_input._maudy_config = load_maudy_config(maud_dir)
     maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc)
     if smoke:
         return

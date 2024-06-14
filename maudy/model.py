@@ -32,7 +32,7 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
 
 
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput, optimize_unbalanced: Optional[list[str]] = None):
+    def __init__(self, maud_input: MaudInput):
         """Initialize the priors of the model.
 
         maud_input: MaudInput
@@ -106,6 +106,11 @@ class Maudy(nn.Module):
         )
         unb_mics = [mic for i, mic in enumerate(mics) if i in self.unbalanced_mics_idx]
         bal_mics = [mic for i, mic in enumerate(mics) if i in self.balanced_mics_idx]
+        unb_config = maud_input._maudy_config.optimize_unbalanced_metabolites
+        optimize_unbalanced = unb_config if unb_config is not None else []
+        if optimize_unbalanced:
+            opt_not_unb = set(optimize_unbalanced) - set(unb_mics)
+            assert not opt_not_unb, f"{opt_not_unb} to be optimized are not unbalanced metabolites!"
         self.optimized_unbalanced_idx = torch.LongTensor(
             [
                 i for i, met in enumerate(unb_mics)
@@ -392,25 +397,25 @@ class Maudy(nn.Module):
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
-        if hasattr(maud_input, "_fdx_stoichiometry"):
-            fdx = maud_input._fdx_stoichiometry
-            if fdx is not None:
-                # first check if all reactions have a correct identifier to catch user typos
-                fdx_not_reac = set(fdx.keys()) - set(enzymatic_reactions)
-                assert len(fdx_not_reac) == 0, f"{fdx_not_reac} with ferredoxin not in {enzymatic_reactions}"
-                self.fdx_stoichiometry = torch.FloatTensor(
-                    [fdx[r] if r in fdx else 0 for r in enzymatic_reactions]
-                )
-                # add row for S matrix to calculate DrG prime
-                self.S_enz_thermo = torch.cat(
-                    [self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0
-                )
+        fdx = maud_input._maudy_config.ferredoxin
+        if fdx is not None:
+            # first check if all reactions have a correct identifier to catch user typos
+            fdx_not_reac = set(fdx.keys()) - set(enzymatic_reactions)
+            assert len(fdx_not_reac) == 0, f"{fdx_not_reac} with ferredoxin not in {enzymatic_reactions}"
+            self.fdx_stoichiometry = torch.FloatTensor(
+                [fdx[r] if r in fdx else 0 for r in enzymatic_reactions]
+            )
+            # add row for S matrix to calculate DrG prime
+            self.S_enz_thermo = torch.cat(
+                [self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0
+            )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
+        nn_config = maud_input._maudy_config.neural_network
         # Setup the various neural networks used in guide
         nn = BaseConcCoder(
-            met_dims=[self.num_mics, 256, 256, 256, 256, len(self.balanced_mics_idx)],
-            reac_dims=[len(enzymatic_reactions), 256, 256, 256, 16],
-            km_dims=[len(self.km_loc), 256, 256, 16],
+            met_dims=[self.num_mics] + nn_config.met_dims + [len(self.balanced_mics_idx)],
+            reac_dims=[len(enzymatic_reactions)] + nn_config.reac_dims,
+            km_dims=[len(self.km_loc)] + nn_config.km_dims,
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
