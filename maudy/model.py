@@ -58,12 +58,12 @@ class Maudy(nn.Module):
             index=enzymatic_reactions,
         )
         reactions = [reac.id for reac in self.kinetic_model.reactions]
-        self.kcat_loc = torch.Tensor([
-            kcats.loc[reac, "location"] for reac in enzymatic_reactions
-        ])
-        self.kcat_scale = torch.Tensor([
-            kcats.loc[reac, "scale"] for reac in enzymatic_reactions
-        ])
+        self.kcat_loc = torch.Tensor(
+            [kcats.loc[reac, "location"] for reac in enzymatic_reactions]
+        )
+        self.kcat_scale = torch.Tensor(
+            [kcats.loc[reac, "scale"] for reac in enzymatic_reactions]
+        )
         # 2. enzyme concentrations
         ec = self.maud_params.conc_enzyme_train.prior
         enzyme_concs = pd.DataFrame(ec.location, index=ec.ids[0], columns=ec.ids[1])
@@ -98,12 +98,12 @@ class Maudy(nn.Module):
             f"{e}_{r}" for e, r in zip(enzymes, enzymatic_reactions)
         ]
         unb_conc = self.maud_params.conc_unbalanced_train.prior
-        self.balanced_mics_idx = torch.LongTensor([
-            i for i, met in enumerate(self.kinetic_model.mics) if met.balanced
-        ])
-        self.unbalanced_mics_idx = torch.LongTensor([
-            i for i, met in enumerate(self.kinetic_model.mics) if not met.balanced
-        ])
+        self.balanced_mics_idx = torch.LongTensor(
+            [i for i, met in enumerate(self.kinetic_model.mics) if met.balanced]
+        )
+        self.unbalanced_mics_idx = torch.LongTensor(
+            [i for i, met in enumerate(self.kinetic_model.mics) if not met.balanced]
+        )
         unb_mics = [mic for i, mic in enumerate(mics) if i in self.unbalanced_mics_idx]
         bal_mics = [mic for i, mic in enumerate(mics) if i in self.balanced_mics_idx]
         unb_config = maud_input._maudy_config.optimize_unbalanced_metabolites
@@ -113,12 +113,12 @@ class Maudy(nn.Module):
             assert (
                 not opt_not_unb
             ), f"{opt_not_unb} to be optimized are not unbalanced metabolites!"
-        self.optimized_unbalanced_idx = torch.LongTensor([
-            i for i, met in enumerate(unb_mics) if met in optimize_unbalanced
-        ])
-        self.non_optimized_unbalanced_idx = torch.LongTensor([
-            i for i, met in enumerate(unb_mics) if met not in optimize_unbalanced
-        ])
+        self.optimized_unbalanced_idx = torch.LongTensor(
+            [i for i, met in enumerate(unb_mics) if met in optimize_unbalanced]
+        )
+        self.non_optimized_unbalanced_idx = torch.LongTensor(
+            [i for i, met in enumerate(unb_mics) if met not in optimize_unbalanced]
+        )
         self.unb_conc_loc = torch.FloatTensor(
             pd.DataFrame(
                 unb_conc.location, index=unb_conc.ids[0], columns=unb_conc.ids[1]
@@ -144,20 +144,24 @@ class Maudy(nn.Module):
         for exp in self.maud_params.experiments:
             for meas in exp.initial_state:
                 conc_inits[(exp.id, meas.target_id)] = (meas.value, 1.0)
-        self.bal_conc_mu = torch.FloatTensor([
+        self.bal_conc_mu = torch.FloatTensor(
             [
-                conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
-                for mic in bal_mics
+                [
+                    conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
+                    for mic in bal_mics
+                ]
+                for exp in self.experiments
             ]
-            for exp in self.experiments
-        ])
-        self.bal_conc_scale = torch.FloatTensor([
+        )
+        self.bal_conc_scale = torch.FloatTensor(
             [
-                conc_inits[(exp, mic)][1] if (exp, mic) in conc_inits else 1.0
-                for mic in bal_mics
+                [
+                    conc_inits[(exp, mic)][1] if (exp, mic) in conc_inits else 1.0
+                    for mic in bal_mics
+                ]
+                for exp in self.experiments
             ]
-            for exp in self.experiments
-        ])
+        )
         self.bal_conc_loc = get_loc_from_mu_scale(self.bal_conc_mu, self.bal_conc_scale)
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
         self.S = torch.FloatTensor(S.values)
@@ -169,31 +173,31 @@ class Maudy(nn.Module):
             S.loc[:, ~S.columns.isin(drain.ids[1])].values
         )
         mic_enz = S.loc[:, ~S.columns.isin(drain.ids[1])].index
-        self.met_to_mic = torch.LongTensor([
-            mets.index(mic.split("_", 1)[0]) for mic in mic_enz
-        ])
+        self.met_to_mic = torch.LongTensor(
+            [mets.index(mic.split("_", 1)[0]) for mic in mic_enz]
+        )
         water_and_trans = {
             reac.id: (reac.water_stoichiometry, reac.transported_charge)
             for reac in self.kinetic_model.reactions
         }
-        self.water_stoichiometry = torch.FloatTensor([
-            water_and_trans[r][0] for r in enzymatic_reactions
-        ])
-        self.transported_charge = torch.FloatTensor([
-            water_and_trans[r][1] for r in enzymatic_reactions
-        ])
+        self.water_stoichiometry = torch.FloatTensor(
+            [water_and_trans[r][0] for r in enzymatic_reactions]
+        )
+        self.transported_charge = torch.FloatTensor(
+            [water_and_trans[r][1] for r in enzymatic_reactions]
+        )
         # 5. saturation, we need kms and indices
         reac_st = {reac.id: reac.stoichiometry for reac in self.kinetic_model.reactions}
         self.sub_conc_idx = [
-            torch.LongTensor([
-                mics.index(met) for met, st in reac_st[reac].items() if st < 0
-            ])
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st < 0]
+            )
             for reac in enzymatic_reactions
         ]
         self.prod_conc_idx = [
-            torch.LongTensor([
-                mics.index(met) for met, st in reac_st[reac].items() if st > 0
-            ])
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st > 0]
+            )
             for reac in enzymatic_reactions
         ]
         self.substrate_S = [
@@ -206,15 +210,15 @@ class Maudy(nn.Module):
         ]
         # the same but for drains
         self.sub_conc_drain_idx = [
-            torch.LongTensor([
-                mics.index(met) for met, st in reac_st[reac].items() if st < 0
-            ])
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st < 0]
+            )
             for reac in drain.ids[1]
         ]
         self.prod_conc_drain_idx = [
-            torch.LongTensor([
-                mics.index(met) for met, st in reac_st[reac].items() if st > 0
-            ])
+            torch.LongTensor(
+                [mics.index(met) for met, st in reac_st[reac].items() if st > 0]
+            )
             for reac in drain.ids[1]
         ]
         self.substrate_drain_S = [
@@ -234,18 +238,20 @@ class Maudy(nn.Module):
         self.km_loc = torch.FloatTensor(kms.location)
         self.km_scale = torch.FloatTensor(kms.scale)
         self.sub_km_idx = [
-            torch.LongTensor([
-                km_map[(enz, met)] for met, st in reac_st[reac].items() if st < 0
-            ])
+            torch.LongTensor(
+                [km_map[(enz, met)] for met, st in reac_st[reac].items() if st < 0]
+            )
             for enz, reac in zip(enzymes, enzymatic_reactions)
         ]
         # if the enz, mic is not in km_map, it is a irreversible reaction
         self.prod_km_idx = [
-            torch.LongTensor([
-                km_map[(enz, met)]
-                for met, st in reac_st[reac].items()
-                if st > 0 and (enz, met) in km_map
-            ])
+            torch.LongTensor(
+                [
+                    km_map[(enz, met)]
+                    for met, st in reac_st[reac].items()
+                    if st > 0 and (enz, met) in km_map
+                ]
+            )
             for enz, reac in zip(enzymes, enzymatic_reactions)
         ]
         # verify that the indices are at least injective
@@ -299,70 +305,84 @@ class Maudy(nn.Module):
             self.dc_scale = torch.FloatTensor(dc.scale)
             self.tc_loc = torch.FloatTensor(tc.location)
             self.tc_scale = torch.FloatTensor(tc.scale)
-            self.allostery_idx = torch.LongTensor([
-                dc_map[enz][0] for enz in enzymes if enz in dc_map
-            ])
-            self.conc_allostery_idx = torch.LongTensor([
-                dc_map[enz][1] for enz in enzymes if enz in dc_map
-            ])
-            self.allostery_activation = torch.BoolTensor([
-                dc_map[enz][2] == "activation" for enz in enzymes if enz in dc_map
-            ])
-            self.subunits = torch.IntTensor([
-                next(
-                    kin_enz.subunits
-                    for kin_enz in self.kinetic_model.enzymes
-                    if kin_enz.id == enz
-                )
-                for enz in enzymes
-                if enz in dc_map
-            ])
+            self.allostery_idx = torch.LongTensor(
+                [dc_map[enz][0] for enz in enzymes if enz in dc_map]
+            )
+            self.conc_allostery_idx = torch.LongTensor(
+                [dc_map[enz][1] for enz in enzymes if enz in dc_map]
+            )
+            self.allostery_activation = torch.BoolTensor(
+                [dc_map[enz][2] == "activation" for enz in enzymes if enz in dc_map]
+            )
+            self.subunits = torch.IntTensor(
+                [
+                    next(
+                        kin_enz.subunits
+                        for kin_enz in self.kinetic_model.enzymes
+                        if kin_enz.id == enz
+                    )
+                    for enz in enzymes
+                    if enz in dc_map
+                ]
+            )
 
-        self.obs_fluxes = torch.FloatTensor([
+        self.obs_fluxes = torch.FloatTensor(
             [
-                meas.value
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.FLUX
+                [
+                    meas.value
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.FLUX
+                ]
+                for exp in self.maud_params.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
-        self.obs_fluxes_std = torch.FloatTensor([
+        )
+        self.obs_fluxes_std = torch.FloatTensor(
             [
-                meas.error_scale
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.FLUX
+                [
+                    meas.error_scale
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.FLUX
+                ]
+                for exp in self.maud_params.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
-        self.obs_conc = torch.FloatTensor([
-            [conc_obs[(e, mic)][0] for mic in bal_mics if (e, mic) in conc_obs]
-            for e in self.experiments
-        ])
-        self.obs_conc_std = torch.FloatTensor([
-            [conc_obs[(e, mic)][1] for mic in bal_mics if (e, mic) in conc_obs]
-            for e in self.experiments
-        ])
-        idx = torch.LongTensor([
+        )
+        self.obs_conc = torch.FloatTensor(
             [
-                enzymatic_reactions.index(meas.reaction)
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.FLUX
+                [conc_obs[(e, mic)][0] for mic in bal_mics if (e, mic) in conc_obs]
+                for e in self.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
+        )
+        self.obs_conc_std = torch.FloatTensor(
+            [
+                [conc_obs[(e, mic)][1] for mic in bal_mics if (e, mic) in conc_obs]
+                for e in self.experiments
+            ]
+        )
+        idx = torch.LongTensor(
+            [
+                [
+                    enzymatic_reactions.index(meas.reaction)
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.FLUX
+                ]
+                for exp in self.maud_params.experiments
+            ]
+        )
         self.num_obs_fluxes = len(idx[0])
         self.obs_fluxes_idx = (
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
-        idx = torch.LongTensor([
+        idx = torch.LongTensor(
             [
-                bal_mics.index(f"{meas.metabolite}_{meas.compartment}")
-                for meas in exp.measurements
-                if meas.target_type == MeasurementType.MIC
+                [
+                    bal_mics.index(f"{meas.metabolite}_{meas.compartment}")
+                    for meas in exp.measurements
+                    if meas.target_type == MeasurementType.MIC
+                ]
+                for exp in self.maud_params.experiments
             ]
-            for exp in self.maud_params.experiments
-        ])
+        )
         self.obs_conc_idx = (
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
@@ -377,9 +397,9 @@ class Maudy(nn.Module):
             assert (
                 len(fdx_not_reac) == 0
             ), f"{fdx_not_reac} with ferredoxin not in {enzymatic_reactions}"
-            self.fdx_stoichiometry = torch.FloatTensor([
-                fdx[r] if r in fdx else 0 for r in enzymatic_reactions
-            ])
+            self.fdx_stoichiometry = torch.FloatTensor(
+                [fdx[r] if r in fdx else 0 for r in enzymatic_reactions]
+            )
             # add row for S matrix to calculate DrG prime
             self.S_enz_thermo = torch.cat(
                 [self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0
@@ -502,14 +522,20 @@ class Maudy(nn.Module):
             psi = pyro.sample(
                 "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
             )
-            conc_nn_input = kcat.new_ones(len(self.experiments), len(self.non_optimized_unbalanced_idx))
-            conc_nn_input[:, self.non_optimized_unbalanced_idx] = (
-                unb_conc_param_loc
+            conc_nn_input = kcat.new_ones(
+                len(self.experiments), len(self.non_optimized_unbalanced_idx)
             )
+            conc_nn_input[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
             # there is a bug in Predict(parallel=True) that may add extra dims
             # and, thus, the squeezes in 1-dim variables
             concoder_output = self.concoder(
-                conc_nn_input, dgr, enzyme_conc, kcat.squeeze(0), kcat_drain, km.squeeze(0), rest.squeeze(0)
+                conc_nn_input,
+                dgr,
+                enzyme_conc,
+                kcat.squeeze(0),
+                kcat_drain,
+                km.squeeze(0),
+                rest.squeeze(0),
             )
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
@@ -531,14 +557,17 @@ class Maudy(nn.Module):
                 ),
             )
             latent_bal_conc = pyro.sample(
-                "latent_bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
+                "latent_bal_conc",
+                dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
             )
             pyro.deterministic("ln_bal_conc", bal_conc_loc)
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = latent_bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
-                fdx_ratio = pyro.sample("fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1))
+                fdx_ratio = pyro.sample(
+                    "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
+                )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
         # log balanced concentrations
         free_enz_km_denom = get_free_enzyme_ratio_denom(
@@ -733,17 +762,17 @@ class Maudy(nn.Module):
             # if inference, use the concoder
             if obs_conc is None and obs_flux is None:
                 # prepare NN conc input, remains 1 for unbalanced optiimzed mets
-                conc_nn_input = kcat.new_ones(len(self.experiments), len(self.non_optimized_unbalanced_idx))
-                conc_nn_input[:, self.non_optimized_unbalanced_idx] = (
-                    unb_conc_param_loc
+                conc_nn_input = kcat.new_ones(
+                    len(self.experiments), len(self.non_optimized_unbalanced_idx)
                 )
+                conc_nn_input[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
                 concoder_output = self.concoder(
                     conc_nn_input, dgr, enz_conc, kcat, kcat_drain, km, rest
-                ) 
+                )
             else:
                 concoder_output = self.concdecoder(
                     obs_conc, dgr, enz_conc, kcat, kcat_drain, km, rest, obs_flux
-                ) 
+                )
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
                 unb_conc_param_loc
@@ -764,13 +793,16 @@ class Maudy(nn.Module):
                 ),
             )
             latent_bal_conc = pyro.sample(
-                "latent_bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
+                "latent_bal_conc",
+                dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
             )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = latent_bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
-                fdx_ratio = pyro.sample("fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1))
+                fdx_ratio = pyro.sample(
+                    "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
+                )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
 
         free_enz_km_denom = get_free_enzyme_ratio_denom(
@@ -838,9 +870,7 @@ class Maudy(nn.Module):
             if kcat_drain.size()[0]
             else None
         )
-        all_flux = (
-            torch.cat([drain, flux], dim=1) if drain is not None else flux
-        )
+        all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
         ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
         with exp_plate:
             if penalize_ss:

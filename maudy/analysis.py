@@ -41,9 +41,7 @@ def summary(samples):
     return site_stats
 
 
-def report_to_dfs(
-    maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: list[str]
-):
+def report_to_dfs(maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: list[str]):
     pred_summary = summary(samples)
     balanced_mics = [met.id for met in maudy.kinetic_model.mics if met.balanced]
     unbalanced_mics = [met.id for met in maudy.kinetic_model.mics if not met.balanced]
@@ -83,13 +81,16 @@ def report_to_dfs(
                 else unbalanced_mics
                 if "unb" in var_name
                 else enzymatic_reactions
-                if var_name in ["dgr", "flux"] else balanced_mics,
+                if var_name in ["dgr", "flux"]
+                else balanced_mics,
             )
             df["experiment"] = experiment
             across_exps[var_name].append(df)
     across_exps = {var_name: pd.concat(dfs) for var_name, dfs in across_exps.items()}
     for var_name in across_exps.keys():
-        measurements = flux_measurements if var_name == "y_flux_train" else mics_measurements        
+        measurements = (
+            flux_measurements if var_name == "y_flux_train" else mics_measurements
+        )
         across_exps[var_name]["measurement"] = across_exps[var_name].apply(
             lambda x: measurements[(x["experiment"], x.name)]
             if (x["experiment"], x.name) in measurements
@@ -101,7 +102,9 @@ def report_to_dfs(
     return across_exps
 
 
-def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[Any, torch.Tensor]:
+def predict(
+    maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]
+) -> dict[Any, torch.Tensor]:
     """Run posterior predictive check."""
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
     with torch.no_grad():
@@ -115,7 +118,15 @@ def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[A
 
 def ppc(model_output: Path, num_epochs: int = 800):
     """Run posterior predictive check and report it."""
-    var_names = ("y_flux_train", "latent_bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc")
+    var_names = (
+        "y_flux_train",
+        "latent_bal_conc",
+        "unb_conc",
+        "ssd",
+        "dgr",
+        "flux",
+        "ln_bal_conc",
+    )
     maudy, _ = load(model_output)
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)
@@ -125,7 +136,7 @@ def ppc(model_output: Path, num_epochs: int = 800):
     for var_name, df in gathered_samples.items():
         print(f"### {var_name} ###")
         if var_name == "dgr":
-            df = df.loc[df.experiment==df.experiment.iloc[0], :]
+            df = df.loc[df.experiment == df.experiment.iloc[0], :]
             del df["experiment"]
         if var_name.startswith("ln_"):
             df.loc[:, ["mean", "5%", "95%"]] = np.exp(df[["mean", "5%", "95%"]])

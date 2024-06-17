@@ -21,28 +21,39 @@ class BaseConcCoder(nn.Module):
         super().__init__()
         # metabolites
         self.met_dims = met_dims
-        self.met_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-        ])
+        self.met_backbone = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
+            ]
+        )
         # reactions
         reac_dims[0] += drain_dim
-        self.reac_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
-        ])
+        self.reac_backbone = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
+            ]
+        )
         # before passing it to the reac_backbone, we need to perform a convolution
         # over the reaction features (dgr, enz_conc, etc.) to a single feature
         self.reac_conv = nn.Sequential(nn.Conv1d(3, 1, 1), nn.ReLU())
         # kms
-        self.km_backbone = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-            for in_dim, out_dim in zip(km_dims[:-1], km_dims[1:])
-        ])
+        self.km_backbone = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                for in_dim, out_dim in zip(km_dims[:-1], km_dims[1:])
+            ]
+        )
 
         self.emb_layer = nn.Sequential(
             nn.Linear(
-                reac_dims[-1] + met_dims[-1] + km_dims[-1] + ki_dim + tc_dim * 2 + obs_flux_dim,
+                reac_dims[-1]
+                + met_dims[-1]
+                + km_dims[-1]
+                + ki_dim
+                + tc_dim * 2
+                + obs_flux_dim,
                 met_dims[-2],
             ),
             nn.ReLU(),
@@ -74,7 +85,12 @@ class BaseConcCoder(nn.Module):
     ) -> list[torch.Tensor]:
         out = self.met_backbone(conc)
         enz_reac_features = torch.stack(
-            [dgr.repeat(enz_conc.shape[0]).reshape(-1, dgr.shape[0]), kcat.repeat(enz_conc.shape[0]).reshape(-1, kcat.shape[0]), enz_conc], dim=1
+            [
+                dgr.repeat(enz_conc.shape[0]).reshape(-1, dgr.shape[0]),
+                kcat.repeat(enz_conc.shape[0]).reshape(-1, kcat.shape[0]),
+                enz_conc,
+            ],
+            dim=1,
         )
         enz_reac_features = self.reac_conv(enz_reac_features)
         enz_reac_features = enz_reac_features.squeeze(1)
@@ -86,8 +102,12 @@ class BaseConcCoder(nn.Module):
                     out,
                     reac_out,
                     km_out,
-                    rest.repeat(enz_conc.shape[0]).reshape(enz_conc.shape[0], rest.shape[0]),
-                    obs_flux if obs_flux is not None else torch.tensor([], device=out.device)
+                    rest.repeat(enz_conc.shape[0]).reshape(
+                        enz_conc.shape[0], rest.shape[0]
+                    ),
+                    obs_flux
+                    if obs_flux is not None
+                    else torch.tensor([], device=out.device),
                 ],
                 dim=-1,
             )

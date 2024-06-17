@@ -20,7 +20,13 @@ from .io import load_maudy_config
 from .model import Maudy
 
 
-def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: bool, eval_conc: bool):
+def train(
+    maud_input: MaudInput,
+    num_epochs: int,
+    penalize_ss: bool,
+    eval_flux: bool,
+    eval_conc: bool,
+):
     pyro.clear_param_store()
     # Enable optional validation warnings
     pyro.enable_validation(False)

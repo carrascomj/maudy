@@ -52,7 +52,9 @@ def get_free_enzyme_ratio_denom(
         [
             ((1.0 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1) - 1.0
             if km_idx.size(0)
-            else torch.zeros(conc.shape[0], device=conc.device)  # if irr: no km for prods: no prod_contr
+            else torch.zeros(
+                conc.shape[0], device=conc.device
+            )  # if irr: no km for prods: no prod_contr
             for conc_idx, km_idx, st in zip(prod_conc_idx, prod_km_idx, product_S)
         ],
         dim=1,
@@ -138,18 +140,20 @@ def get_kinetic_multi_drain(
 def get_allostery(
     conc: Vector,
     free_enzyme_ratio: Vector,
-    transfer: Vector,      # only one per enzyme
+    transfer: Vector,  # only one per enzyme
     dissociation: Vector,  # only one per enzyme (either act or inh)
     is_activation: torch.BoolTensor,  # 1 if act; 0 if inh
-    reac_idx: torch.LongTensor,    # index of corresponding reactions
+    reac_idx: torch.LongTensor,  # index of corresponding reactions
     conc_idx: ReacIndex,
     subunits: Vector,
 ):
     out = torch.ones_like(free_enzyme_ratio)
     allostery = conc[:, conc_idx] / dissociation
-    act_denom = 1.0 + is_activation * allostery 
+    act_denom = 1.0 + is_activation * allostery
     inh_num = 1.0 + ~is_activation * allostery
     out[..., reac_idx] = 1 / (
-        1 + transfer * (free_enzyme_ratio[..., reac_idx] * inh_num / act_denom) ** subunits
+        1
+        + transfer
+        * (free_enzyme_ratio[..., reac_idx] * inh_num / act_denom) ** subunits
     )
     return out
