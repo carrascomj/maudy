@@ -20,21 +20,6 @@ from .io import load_maudy_config
 from .model import Maudy
 
 
-def log_cosine_schedule(start_value: float, end_value: float, iterations: int, min_value: float = float("-inf"), max_value: float = float("-inf")) -> torch.Tensor:
-    """Compute a log cosine schedule between `start_value` and `end_value` over `iterations`."""
-    assert iterations > 0, ValueError("Number of iterations must be greater than 0.")  
-    log_start = np.log10(start_value)
-    log_end = np.log10(end_value)
-    t = np.arange(iterations) / (iterations - 1)
-    cos_values = (1 + np.cos(np.pi * t)) / 2
-    log_schedule = log_end + (log_start - log_end) * cos_values
-    # Convert back from log10 scale
-    schedule = torch.FloatTensor(10 ** log_schedule)
-    schedule[schedule < min_value] = min_value
-    schedule[schedule > max_value] = max_value
-    return schedule
-
-
 def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: bool, eval_conc: bool):
     pyro.clear_param_store()
     # Enable optional validation warnings
@@ -44,7 +29,6 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: 
     maudy = Maudy(maud_input)
     # maudy.print_inputs()
     # penalization_temp = log_cosine_schedule(10, 10000, num_epochs, 0.001, 1000)
-    penalization_temp = log_cosine_schedule(10, 11, num_epochs, 0.001, 1000)
     if torch.cuda.is_available():
         maudy.cuda()
         penalization_temp = penalization_temp.cuda()
@@ -69,11 +53,11 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: 
     elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
 
-    progress_bar = tqdm(penalization_temp, total=num_epochs, desc="Training", unit="epoch")
-    for penalization_ss in progress_bar:
-        loss = svi.step(obs_flux, obs_conc, penalization_ss if penalize_ss else False)
+    progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
+    for _ in progress_bar:
+        loss = svi.step(obs_flux, obs_conc, penalize_ss)
         lr = list(optimizer.get_state().values())[0]["param_groups"][0]["lr"]
-        progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}", ss=f"{penalization_ss:.2e}")
+        progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}")
     return maudy, optimizer
 
 
