@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 import pyro
+import numpy as np
 import torch
 from maud.data_model.experiment import MeasurementType
 from maud.loading_maud_inputs import load_maud_input
@@ -119,7 +120,7 @@ def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[A
 
 def ppc(model_output: Path, num_epochs: int = 800):
     """Run posterior predictive check and report it."""
-    var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr", "flux")
+    var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc")
     maudy, _ = load(model_output)
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)
@@ -131,4 +132,6 @@ def ppc(model_output: Path, num_epochs: int = 800):
         if var_name == "dgr":
             df = df.loc[df.experiment==df.experiment.iloc[0], :]
             del df["experiment"]
+        if var_name.startswith("ln_"):
+            df.loc[:, ["mean", "5%", "95%"]] = np.exp(df[["mean", "5%", "95%"]])
         print(df)
