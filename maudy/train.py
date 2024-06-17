@@ -33,11 +33,8 @@ def train(
 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input)
-    # maudy.print_inputs()
-    # penalization_temp = log_cosine_schedule(10, 10000, num_epochs, 0.001, 1000)
     if torch.cuda.is_available():
         maudy.cuda()
-        penalization_temp = penalization_temp.cuda()
     obs_flux, obs_conc = maudy.get_obs()
     if not eval_flux:
         obs_flux = None
