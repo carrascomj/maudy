@@ -432,7 +432,7 @@ class Maudy(nn.Module):
         self,
         obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
-        penalize_ss: Union[bool, float] = True,
+        penalize_ss: bool = True,
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
@@ -843,7 +843,7 @@ class Maudy(nn.Module):
         )
         ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
         with exp_plate:
-            if penalize_ss or isinstance(penalize_ss, float):
+            if penalize_ss:
                 pyro.factor(
                     "steady_state_dev",
                     (ssd.abs() / latent_bal_conc).clamp(1e-1, 10).sum(),

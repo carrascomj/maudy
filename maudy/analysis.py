@@ -76,11 +76,6 @@ def report_to_dfs(
             this_dict = {}
             for key, items in pred_summary[var_name].items():
                 this_dict[key] = items[i] if var_name != "dgr" else items.squeeze(0)
-            if var_name == "flux":
-                print(f"{pred_summary['flux']=}")
-                print(f"{this_dict=}")
-                print(f"{enzymatic_reactions=}")
-            print(f"{var_name=}")
             df = pd.DataFrame(
                 this_dict,
                 index=obs_fluxes
