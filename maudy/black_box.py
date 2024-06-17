@@ -1,5 +1,6 @@
 """Neural networks used in the guide to approximate the ODE solver."""
 
+from typing import Optional
 import torch
 import torch.nn as nn
 
@@ -15,6 +16,7 @@ class BaseConcCoder(nn.Module):
         drain_dim: int = 0,
         ki_dim: int = 0,
         tc_dim: int = 0,
+        obs_flux_dim: int = 0,
     ):
         super().__init__()
         # metabolites
@@ -40,7 +42,7 @@ class BaseConcCoder(nn.Module):
 
         self.emb_layer = nn.Sequential(
             nn.Linear(
-                reac_dims[-1] + met_dims[-1] + km_dims[-1] + ki_dim + tc_dim * 2,
+                reac_dims[-1] + met_dims[-1] + km_dims[-1] + ki_dim + tc_dim * 2 + obs_flux_dim,
                 met_dims[-2],
             ),
             nn.ReLU(),
@@ -68,6 +70,7 @@ class BaseConcCoder(nn.Module):
         drains: torch.Tensor,
         km: torch.Tensor,
         rest: torch.Tensor,
+        obs_flux: Optional[torch.Tensor] = None,
     ) -> list[torch.Tensor]:
         out = self.met_backbone(conc)
         enz_reac_features = torch.stack(
@@ -84,6 +87,7 @@ class BaseConcCoder(nn.Module):
                     reac_out,
                     km_out,
                     rest.repeat(enz_conc.shape[0]).reshape(enz_conc.shape[0], rest.shape[0]),
+                    obs_flux if obs_flux is not None else torch.tensor([], device=out.device)
                 ],
                 dim=-1,
             )
