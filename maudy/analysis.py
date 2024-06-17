@@ -120,7 +120,7 @@ def predict(maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]) -> dict[A
 
 def ppc(model_output: Path, num_epochs: int = 800):
     """Run posterior predictive check and report it."""
-    var_names = ("y_flux_train", "bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc")
+    var_names = ("y_flux_train", "latent_bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc")
     maudy, _ = load(model_output)
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)

@@ -530,12 +530,12 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            bal_conc = pyro.sample(
-                "bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
+            latent_bal_conc = pyro.sample(
+                "latent_bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
             )
             pyro.deterministic("ln_bal_conc", bal_conc_loc)
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = bal_conc
+            conc[:, self.balanced_mics_idx] = latent_bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample("fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1))
@@ -763,11 +763,11 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            bal_conc = pyro.sample(
-                "bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
+            latent_bal_conc = pyro.sample(
+                "latent_bal_conc", dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1)
             )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = bal_conc
+            conc[:, self.balanced_mics_idx] = latent_bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample("fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1))
@@ -846,7 +846,7 @@ class Maudy(nn.Module):
             if penalize_ss or isinstance(penalize_ss, float):
                 pyro.factor(
                     "steady_state_dev",
-                    (ssd.abs() / bal_conc).clamp(1e-1, 10).sum(),
+                    (ssd.abs() / latent_bal_conc).clamp(1e-1, 10).sum(),
                 )
 
     def print_inputs(self):
