@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyro
 import torch
 from maud.data_model.experiment import MeasurementType
 from maud.loading_maud_inputs import load_maud_input
@@ -21,6 +22,7 @@ def load(model_output: Path):
     maudy = Maudy(maud_input)
     state_dict = torch.load(model_output / "model.pt", map_location="cpu")
     maudy.load_state_dict(state_dict["maudy"])
+    pyro.get_param_store().load(str(model_output / "model_params.pt"))
     optimizer = ClippedAdam({"lr": 0.006})
     optimizer.set_state(state_dict["optimizer"])
     return maudy, optimizer

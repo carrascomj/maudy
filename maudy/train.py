@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 import pyro
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
@@ -19,7 +20,7 @@ from .io import load_maudy_config
 from .model import Maudy
 
 
-def log_cosine_schedule(start_value: float, end_value: float, iterations: int, min_value: float = float("-inf")) -> torch.Tensor:
+def log_cosine_schedule(start_value: float, end_value: float, iterations: int, min_value: float = float("-inf"), max_value: float = float("-inf")) -> torch.Tensor:
     """Compute a log cosine schedule between `start_value` and `end_value` over `iterations`."""
     assert iterations > 0, ValueError("Number of iterations must be greater than 0.")  
     log_start = np.log10(start_value)
@@ -30,6 +31,7 @@ def log_cosine_schedule(start_value: float, end_value: float, iterations: int, m
     # Convert back from log10 scale
     schedule = torch.FloatTensor(10 ** log_schedule)
     schedule[schedule < min_value] = min_value
+    schedule[schedule > max_value] = max_value
     return schedule
 
 
@@ -41,7 +43,8 @@ def train(maud_input: MaudInput, num_epochs: int, penalize_ss: bool, eval_flux: 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input)
     # maudy.print_inputs()
-    penalization_temp = log_cosine_schedule(0.001, 0.1, num_epochs, 0.001)
+    # penalization_temp = log_cosine_schedule(10, 10000, num_epochs, 0.001, 1000)
+    penalization_temp = log_cosine_schedule(10, 11, num_epochs, 0.001, 1000)
     if torch.cuda.is_available():
         maudy.cuda()
         penalization_temp = penalization_temp.cuda()
@@ -103,4 +106,5 @@ def sample(
         {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()},
         out / "model.pt",
     )
+    pyro.get_param_store().save(str(out / "model_params.pt"))
     shutil.copytree(maud_dir, out / "user_input")
