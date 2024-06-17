@@ -600,13 +600,7 @@ class Maudy(nn.Module):
             if penalize_ss or isinstance(penalize_ss, float):
                 pyro.factor(
                     "steady_state_dev",
-                    penalize_ss
-                    * (
-                        self.bal_conc_mu.clamp(self.bal_conc_mu[:, self.obs_conc_idx].min(), None)
-                        / (ssd.abs() + 1e-11)
-                    )
-                    .clamp(1e-6, 1e3)
-                    .sum(),
+                    -(ssd.abs() / bal_conc).clamp(1e-1, 10).sum(),
                 )
 
     def float_tensor(self, x) -> torch.Tensor:
