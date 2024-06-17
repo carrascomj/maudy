@@ -522,14 +522,10 @@ class Maudy(nn.Module):
             psi = pyro.sample(
                 "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
             )
-            conc_nn_input = kcat.new_ones(
-                len(self.experiments), len(self.non_optimized_unbalanced_idx)
-            )
-            conc_nn_input[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
             # there is a bug in Predict(parallel=True) that may add extra dims
             # and, thus, the squeezes in 1-dim variables
             concoder_output = self.concoder(
-                conc_nn_input,
+                unb_conc_param_loc,
                 dgr,
                 enzyme_conc,
                 kcat.squeeze(0),
