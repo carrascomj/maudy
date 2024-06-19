@@ -505,7 +505,10 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            unb_conc_param_loc = self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
+            unb_conc_param_loc = pyro.param(
+                "unb_conc_param_loc",
+                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
+            )
             kcat_drain = (
                 pyro.sample(
                     "kcat_drain",
@@ -655,9 +658,6 @@ class Maudy(nn.Module):
         ssd = pyro.deterministic(
             "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx]
         )
-        print(f"(M) flux -> {all_flux.min()} -- {all_flux.max()}")
-        print(f"(M) ssd -> {ssd.min()} -- {ssd.max()}")
-        print(f"(M) latent_conc -> {latent_bal_conc.min()} -- {latent_bal_conc.max()}")
         with exp_plate:
             pyro.sample(
                 "y_flux_train",
@@ -858,10 +858,6 @@ class Maudy(nn.Module):
         )
         all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
         ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
-        print(f"(G) flux -> {all_flux.min()} -- {all_flux.max()}")
-        print(f"(G) ssd -> {ssd.min()} -- {ssd.max()}")
-        print(f"(G) latent_conc -> {latent_bal_conc.min()} -- {latent_bal_conc.max()}")
-        print(ssd)
         if penalize_ss:
             pyro.factor(
                 "steady_state_dev",
