@@ -801,19 +801,12 @@ class Maudy(nn.Module):
             self.substrate_S,
             self.product_S,
         )
-        free_enz_ki_denom = (
-            pyro.deterministic(
-                "ci",
-                get_competitive_inhibition_denom(
-                    conc,
-                    ki,
-                    self.ki_conc_idx,
-                    self.ki_idx,
-                ),
-            )
-            if self.has_ci
-            else 0
-        )
+        free_enz_ki_denom = get_competitive_inhibition_denom(
+            conc,
+            ki,
+            self.ki_conc_idx,
+            self.ki_idx,
+        ) if self.has_ci else 0
         free_enzyme_ratio = 1 / (free_enz_km_denom + free_enz_ki_denom)
         vmax = get_vmax(kcat, enz_conc)
         rev = get_reversibility(
@@ -862,6 +855,7 @@ class Maudy(nn.Module):
             pyro.factor(
                 "steady_state_dev",
                 (ssd.abs() / (latent_bal_conc + 1e-13)).sum(),
+                has_rsample=True,
             )
 
     def print_inputs(self):

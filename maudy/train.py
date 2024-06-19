@@ -58,7 +58,7 @@ def train(
     for _ in progress_bar:
         loss = svi.step(obs_flux, obs_conc, penalize_ss)
         lr = list(optimizer.get_state().values())[0]["param_groups"][0]["lr"]
-        progress_bar.set_postfix(loss=f"{loss:+.2e}", lr=f"{lr:+.2e}")
+        progress_bar.set_postfix(loss=f"{loss:+.2e}", lr=f"{lr:.2e}")
     return maudy, optimizer
 
 
