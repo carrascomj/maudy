@@ -6,8 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-import pandas as pd
 import pyro
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
@@ -60,7 +58,7 @@ def train(
     for _ in progress_bar:
         loss = svi.step(obs_flux, obs_conc, penalize_ss)
         lr = list(optimizer.get_state().values())[0]["param_groups"][0]["lr"]
-        progress_bar.set_postfix(loss=f"{loss:.2e}", lr=f"{lr:.2e}")
+        progress_bar.set_postfix(loss=f"{loss:+.2e}", lr=f"{lr:+.2e}")
     return maudy, optimizer
 
 

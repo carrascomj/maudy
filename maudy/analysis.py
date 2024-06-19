@@ -23,7 +23,7 @@ def load(model_output: Path):
     maudy = Maudy(maud_input)
     state_dict = torch.load(model_output / "model.pt", map_location="cpu")
     maudy.load_state_dict(state_dict["maudy"])
-    pyro.get_param_store().load(str(model_output / "model_params.pt"))
+    pyro.get_param_store().load(str(model_output / "model_params.pt"), map_location="cpu")
     optimizer = ClippedAdam({"lr": 0.006})
     optimizer.set_state(state_dict["optimizer"])
     return maudy, optimizer

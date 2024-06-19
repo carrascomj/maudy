@@ -13,19 +13,29 @@ annotated-types==0.7.0
     # via pydantic
 arviz==0.18.0
     # via maud-metabolic-models
+asttokens==2.4.1
+    # via stack-data
 click==8.1.7
     # via maud-metabolic-models
     # via typer-slim
 cmdstanpy==1.2.3
     # via maud-metabolic-models
+comm==0.2.2
+    # via ipykernel
 contourpy==1.2.1
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
+debugpy==1.8.1
+    # via ipykernel
+decorator==5.1.1
+    # via ipython
 depinfo==1.7.0
     # via maud-metabolic-models
 dm-tree==0.1.8
     # via arviz
+executing==2.0.1
+    # via stack-data
 filelock==3.14.0
     # via torch
 fonttools==4.53.0
@@ -38,8 +48,18 @@ h5py==3.11.0
     # via h5netcdf
 importlib-resources==6.4.0
     # via maud-metabolic-models
+ipykernel==6.29.4
+ipython==8.25.0
+    # via ipykernel
+jedi==0.19.1
+    # via ipython
 jinja2==3.1.4
     # via torch
+jupyter-client==8.6.2
+    # via ipykernel
+jupyter-core==5.7.2
+    # via ipykernel
+    # via jupyter-client
 kiwisolver==1.4.5
     # via matplotlib
 markupsafe==2.1.5
@@ -47,10 +67,18 @@ markupsafe==2.1.5
 matplotlib==3.9.0
     # via arviz
     # via maud-metabolic-models
+    # via plotnine
+matplotlib-inline==0.1.7
+    # via ipykernel
+    # via ipython
 maud-metabolic-models @ git+https://github.com/biosustain/Maud@99ecc353c990f44933febe4876d4aac9b6f885bd
     # via maudy
+mizani==0.11.4
+    # via plotnine
 mpmath==1.3.0
     # via sympy
+nest-asyncio==1.6.0
+    # via ipykernel
 networkx==3.3
     # via torch
 numpy==1.26.4
@@ -60,11 +88,15 @@ numpy==1.26.4
     # via h5py
     # via matplotlib
     # via maud-metabolic-models
+    # via mizani
     # via opt-einsum
     # via pandas
+    # via patsy
+    # via plotnine
     # via pyro-ppl
     # via scipy
     # via stanio
+    # via statsmodels
     # via xarray
     # via xarray-einstats
 nvidia-cublas-cu12==12.1.3.1
@@ -100,21 +132,45 @@ opt-einsum==3.3.0
 packaging==24.0
     # via arviz
     # via h5netcdf
+    # via ipykernel
     # via matplotlib
+    # via statsmodels
     # via xarray
 pandas==2.2.2
     # via arviz
     # via cmdstanpy
     # via maud-metabolic-models
+    # via mizani
+    # via plotnine
+    # via statsmodels
     # via xarray
+parso==0.8.4
+    # via jedi
+patsy==0.5.6
+    # via statsmodels
+pexpect==4.9.0
+    # via ipython
 pillow==10.3.0
     # via matplotlib
 pip==24.0
     # via maud-metabolic-models
+platformdirs==4.2.2
+    # via jupyter-core
+plotnine==0.13.6
+prompt-toolkit==3.0.47
+    # via ipython
+psutil==6.0.0
+    # via ipykernel
+ptyprocess==0.7.0
+    # via pexpect
+pure-eval==0.2.2
+    # via stack-data
 pydantic==2.7.3
     # via maud-metabolic-models
 pydantic-core==2.18.4
     # via pydantic
+pygments==2.18.0
+    # via ipython
 pyparsing==3.1.2
     # via matplotlib
 pyro-api==0.1.2
@@ -122,21 +178,34 @@ pyro-api==0.1.2
 pyro-ppl==1.9.1
     # via maudy
 python-dateutil==2.9.0.post0
+    # via jupyter-client
     # via matplotlib
     # via pandas
 pytz==2024.1
     # via pandas
+pyzmq==26.0.3
+    # via ipykernel
+    # via jupyter-client
 ruff==0.4.7
 scipy==1.13.1
     # via arviz
     # via maud-metabolic-models
+    # via mizani
+    # via plotnine
+    # via statsmodels
     # via xarray-einstats
 setuptools==70.0.0
     # via arviz
 six==1.16.0
+    # via asttokens
+    # via patsy
     # via python-dateutil
+stack-data==0.6.3
+    # via ipython
 stanio==0.5.0
     # via cmdstanpy
+statsmodels==0.14.2
+    # via plotnine
 sympy==1.12.1
     # via maud-metabolic-models
     # via torch
@@ -145,10 +214,20 @@ toml==0.10.2
 torch==2.3.0
     # via maudy
     # via pyro-ppl
+tornado==6.4.1
+    # via ipykernel
+    # via jupyter-client
 tqdm==4.66.4
     # via cmdstanpy
     # via maudy
     # via pyro-ppl
+traitlets==5.14.3
+    # via comm
+    # via ipykernel
+    # via ipython
+    # via jupyter-client
+    # via jupyter-core
+    # via matplotlib-inline
 typer-slim==0.12.3
     # via maudy
 typing-extensions==4.12.1
@@ -159,6 +238,8 @@ typing-extensions==4.12.1
     # via typer-slim
 tzdata==2024.1
     # via pandas
+wcwidth==0.2.13
+    # via prompt-toolkit
 xarray==2024.5.0
     # via arviz
     # via xarray-einstats

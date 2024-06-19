@@ -1,6 +1,6 @@
 from collections import defaultdict
 from copy import deepcopy
-from typing import Optional, Union
+from typing import Optional
 
 import pandas as pd
 import pyro
@@ -505,11 +505,7 @@ class Maudy(nn.Module):
                     1
                 ),
             )
-            unb_conc_param_loc = pyro.param(
-                "unb_conc_loc",
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
-                event_dim=1,
-            )
+            unb_conc_param_loc = self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
             kcat_drain = (
                 pyro.sample(
                     "kcat_drain",
@@ -655,10 +651,13 @@ class Maudy(nn.Module):
         )
         all_flux = (
             torch.cat([drain, flux], dim=1) if drain is not None else flux
-        ).clamp(-1e14, 1)
-        pyro.deterministic(
-            "ssd", all_flux.clamp(-10, 10) @ self.S.T[:, self.balanced_mics_idx]
+        ).clamp(-1e14, 100)
+        ssd = pyro.deterministic(
+            "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx]
         )
+        print(f"(M) flux -> {all_flux.min()} -- {all_flux.max()}")
+        print(f"(M) ssd -> {ssd.min()} -- {ssd.max()}")
+        print(f"(M) latent_conc -> {latent_bal_conc.min()} -- {latent_bal_conc.max()}")
         with exp_plate:
             pyro.sample(
                 "y_flux_train",
@@ -679,7 +678,7 @@ class Maudy(nn.Module):
         self,
         obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
-        penalize_ss: bool = True,
+        penalize_ss: bool = False,
     ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
@@ -749,19 +748,10 @@ class Maudy(nn.Module):
                 if self.drain_mean.shape[1]
                 else self.float_tensor([])
             )
-            unb_conc_param_loc = pyro.param(
-                "unb_conc_loc",
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
-                event_dim=1,
-            )
-
             # if inference, use the concoder
             if obs_conc is None and obs_flux is None:
                 # prepare NN conc input, remains 1 for unbalanced optiimzed mets
-                conc_nn_input = kcat.new_ones(
-                    len(self.experiments), len(self.non_optimized_unbalanced_idx)
-                )
-                conc_nn_input[:, self.non_optimized_unbalanced_idx] = unb_conc_param_loc
+                conc_nn_input = self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
                 concoder_output = self.concoder(
                     conc_nn_input, dgr, enz_conc, kcat, kcat_drain, km, rest
                 )
@@ -771,7 +761,7 @@ class Maudy(nn.Module):
                 )
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
-                unb_conc_param_loc
+                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
             )
             # in reverse order that additional head outputs may have been added
             if len(self.optimized_unbalanced_idx.size()) != 0:
@@ -868,12 +858,15 @@ class Maudy(nn.Module):
         )
         all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
         ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
-        with exp_plate:
-            if penalize_ss:
-                pyro.factor(
-                    "steady_state_dev",
-                    (ssd.abs() / latent_bal_conc).clamp(1e-1, 10).sum(),
-                )
+        print(f"(G) flux -> {all_flux.min()} -- {all_flux.max()}")
+        print(f"(G) ssd -> {ssd.min()} -- {ssd.max()}")
+        print(f"(G) latent_conc -> {latent_bal_conc.min()} -- {latent_bal_conc.max()}")
+        print(ssd)
+        if penalize_ss:
+            pyro.factor(
+                "steady_state_dev",
+                (ssd.abs() / (latent_bal_conc + 1e-13)).sum(),
+            )
 
     def print_inputs(self):
         print(

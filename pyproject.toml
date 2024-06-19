@@ -23,6 +23,9 @@ build-backend = "hatchling.build"
 managed = true
 dev-dependencies = [
     "ruff>=0.4.7",
+    "debugpy>=1.8.1",
+    "ipykernel>=6.29.4",
+    "plotnine>=0.13.6",
 ]
 
 [tool.hatch.metadata]
