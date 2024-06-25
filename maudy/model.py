@@ -349,13 +349,13 @@ class Maudy(nn.Module):
         )
         self.obs_conc = torch.FloatTensor(
             [
-                [conc_obs[(e, mic)][0] for mic in bal_mics if (e, mic) in conc_obs]
+                [conc_obs[(e, mic)][0]  if (e, mic) in conc_obs else float("nan") for mic in bal_mics]
                 for e in self.experiments
             ]
         )
         self.obs_conc_std = torch.FloatTensor(
             [
-                [conc_obs[(e, mic)][1] for mic in bal_mics if (e, mic) in conc_obs]
+                [conc_obs[(e, mic)][1]  if (e, mic) in conc_obs else float("nan") for mic in bal_mics]
                 for e in self.experiments
             ]
         )
@@ -374,20 +374,7 @@ class Maudy(nn.Module):
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
-        idx = torch.LongTensor(
-            [
-                [
-                    bal_mics.index(f"{meas.metabolite}_{meas.compartment}")
-                    for meas in exp.measurements
-                    if meas.target_type == MeasurementType.MIC
-                ]
-                for exp in self.maud_params.experiments
-            ]
-        )
-        self.obs_conc_idx = (
-            [i for i, exp in enumerate(idx) for _ in exp],
-            [i for exp in idx for i in exp],
-        )
+        self.obs_conc_mask = ~torch.isnan(self.obs_conc_std)
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
@@ -419,7 +406,7 @@ class Maudy(nn.Module):
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
         )
         nn_encoder = BaseConcCoder(
-            met_dims=[self.obs_conc.shape[-1]]
+            met_dims=[len(self.balanced_mics_idx)]
             + nn_config.met_dims
             + [len(self.balanced_mics_idx)],
             reac_dims=[len(enzymatic_reactions)] + nn_config.reac_dims,
@@ -497,9 +484,7 @@ class Maudy(nn.Module):
                 "tc", dist.LogNormal(self.tc_loc, self.tc_scale).to_event(1)
             )
             rest = torch.cat([rest, tc, dc], dim=-1)
-
-        exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
-        with exp_plate:
+        with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(self.enzyme_concs_loc, self.enzyme_concs_scale).to_event(
@@ -552,9 +537,11 @@ class Maudy(nn.Module):
                     1
                 ),
             )
+            # lower bound on the observed scales (if any)
+            scales = torch.where(torch.isnan(self.obs_conc_std) | (bal_conc_scale > self.obs_conc_std), bal_conc_scale, self.obs_conc_std)
             latent_bal_conc = pyro.sample(
                 "latent_bal_conc",
-                dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
+                dist.LogNormal(bal_conc_loc, scales).to_event(1),
             )
             pyro.deterministic("ln_bal_conc", bal_conc_loc)
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
@@ -565,101 +552,102 @@ class Maudy(nn.Module):
                     "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
                 )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
-        # log balanced concentrations
-        free_enz_km_denom = get_free_enzyme_ratio_denom(
-            conc,
-            km,
-            self.sub_conc_idx,
-            self.sub_km_idx,
-            self.prod_conc_idx,
-            self.prod_km_idx,
-            self.substrate_S,
-            self.product_S,
-        )
-        free_enz_ki_denom = (
-            pyro.deterministic(
-                "ci",
-                get_competitive_inhibition_denom(
-                    conc,
-                    ki,
-                    self.ki_conc_idx,
-                    self.ki_idx,
-                ),
+            # log balanced concentrations
+            free_enz_km_denom = get_free_enzyme_ratio_denom(
+                conc,
+                km,
+                self.sub_conc_idx,
+                self.sub_km_idx,
+                self.prod_conc_idx,
+                self.prod_km_idx,
+                self.substrate_S,
+                self.product_S,
             )
-            if self.has_ci
-            else 0
-        )
-        free_enzyme_ratio = pyro.deterministic(
-            "free_enzyme_ratio",
-            1 / (free_enz_km_denom + free_enz_ki_denom),
-        )
-        vmax = pyro.deterministic("vmax", get_vmax(kcat, enzyme_conc))
-        rev = pyro.deterministic(
-            "rev",
-            get_reversibility(
-                self.S_enz_thermo, dgr, conc, self.transported_charge, psi
-            ),
-        )
-        sat = pyro.deterministic(
-            "sat",
-            get_saturation(
-                conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
-            ),
-        )
-        allostery = (
-            pyro.deterministic(
-                "allostery",
-                get_allostery(
-                    conc,
-                    free_enzyme_ratio,
-                    tc,
-                    dc,
-                    self.allostery_activation,
-                    self.allostery_idx,
-                    self.conc_allostery_idx,
-                    self.subunits,
-                ),
+            free_enz_ki_denom = (
+                pyro.deterministic(
+                    "ci",
+                    get_competitive_inhibition_denom(
+                        conc,
+                        ki,
+                        self.ki_conc_idx,
+                        self.ki_idx,
+                    ),
+                    event_dim=1
+                )
+                if self.has_ci
+                else 0
             )
-            if self.has_allostery
-            else torch.ones_like(vmax)
-        )
-        flux = pyro.deterministic("flux", vmax * rev * sat * allostery).reshape(
-            len(self.experiments), len(self.sub_km_idx)
-        )
-        true_obs_flux = flux[self.obs_fluxes_idx]
-        true_obs_conc = bal_conc_loc[self.obs_conc_idx]
-        # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
-        true_obs_flux = true_obs_flux.reshape(len(self.experiments), -1)
-        true_obs_conc = true_obs_conc.reshape(len(self.experiments), -1)
-        if true_obs_flux.ndim == 1:
-            true_obs_flux = true_obs_flux.unsqueeze(-1)
-        if true_obs_conc.ndim == 1:
-            true_obs_conc = true_obs_conc.unsqueeze(-1)
+            free_enzyme_ratio = pyro.deterministic(
+                "free_enzyme_ratio",
+                1 / (free_enz_km_denom + free_enz_ki_denom),
+                    event_dim=1
+            )
+            vmax = pyro.deterministic("vmax", get_vmax(kcat, enzyme_conc), event_dim=1)
+            rev = pyro.deterministic(
+                "rev",
+                get_reversibility(
+                    self.S_enz_thermo, dgr, conc, self.transported_charge, psi
+                ),
+                event_dim=1
+            )
+            sat = pyro.deterministic(
+                "sat",
+                get_saturation(
+                    conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
+                ),
+                event_dim=1
+            )
+            allostery = (
+                pyro.deterministic(
+                    "allostery",
+                    get_allostery(
+                        conc,
+                        free_enzyme_ratio,
+                        tc,
+                        dc,
+                        self.allostery_activation,
+                        self.allostery_idx,
+                        self.conc_allostery_idx,
+                        self.subunits,
+                    ),
+                    event_dim=1
+                )
+                if self.has_allostery
+                else torch.ones_like(vmax)
+            )
+            flux = pyro.deterministic("flux", vmax * rev * sat * allostery, event_dim=1).reshape(
+                len(self.experiments), len(self.sub_km_idx)
+            )
+            true_obs_flux = flux[self.obs_fluxes_idx]
+            # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
+            true_obs_flux = true_obs_flux.reshape(len(self.experiments), -1)
+            if true_obs_flux.ndim == 1:
+                true_obs_flux = true_obs_flux.unsqueeze(-1)
 
-        # TODO: small drain correction from config
-        drain = (
-            pyro.deterministic(
-                "drain",
-                get_kinetic_multi_drain(
-                    kcat_drain,
-                    conc,
-                    self.sub_conc_drain_idx,
-                    self.prod_conc_drain_idx,
-                    self.substrate_drain_S,
-                    self.product_drain_S,
-                    1e-9,
-                ),
+            # TODO: small drain correction from config
+            drain = (
+                pyro.deterministic(
+                    "drain",
+                    get_kinetic_multi_drain(
+                        kcat_drain,
+                        conc,
+                        self.sub_conc_drain_idx,
+                        self.prod_conc_drain_idx,
+                        self.substrate_drain_S,
+                        self.product_drain_S,
+                        1e-9,
+                    ),
+                    event_dim=1
+                )
+                if kcat_drain.size()[0]
+                else None
             )
-            if kcat_drain.size()[0]
-            else None
-        )
-        all_flux = (
-            torch.cat([drain, flux], dim=1) if drain is not None else flux
-        ).clamp(-1e14, 100)
-        ssd = pyro.deterministic(
-            "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx]
-        )
-        with exp_plate:
+            all_flux = (
+                torch.cat([drain, flux], dim=1) if drain is not None else flux
+            )
+            pyro.deterministic(
+                "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx], event_dim=1
+            )
             pyro.sample(
                 "y_flux_train",
                 dist.Normal(true_obs_flux, self.obs_fluxes_std).to_event(1),
@@ -667,8 +655,11 @@ class Maudy(nn.Module):
             )
             pyro.sample(
                 "y_conc_train",
-                dist.LogNormal(true_obs_conc, self.obs_conc_std).to_event(1),
-                obs=obs_conc,
+                dist.LogNormal(
+                    latent_bal_conc.log()[self.obs_conc_mask],
+                    self.obs_conc_std[self.obs_conc_mask]
+                ).to_event(1),
+                obs=obs_conc[self.obs_conc_mask] if obs_conc is not None else None,
             )
 
     def float_tensor(self, x) -> torch.Tensor:
@@ -724,8 +715,8 @@ class Maudy(nn.Module):
             dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
-        exp_plate = pyro.plate("experiment", size=len(self.experiments), dim=-1)
-        with exp_plate:
+
+        with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
             )
@@ -757,8 +748,9 @@ class Maudy(nn.Module):
                     conc_nn_input, dgr, enz_conc, kcat, kcat_drain, km, rest
                 )
             else:
+                conc_nn_input = torch.where(torch.isnan(obs_conc), 0, obs_conc)
                 concoder_output = self.concdecoder(
-                    obs_conc, dgr, enz_conc, kcat, kcat_drain, km, rest, obs_flux
+                    conc_nn_input, dgr, enz_conc, kcat, kcat_drain, km, rest, obs_flux
                 )
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
@@ -771,7 +763,7 @@ class Maudy(nn.Module):
                     unb_optimized
                 )
             if self.has_fdx:
-                fdx_contr = concoder_output.pop()
+                fdx_ratio = concoder_output.pop()
             bal_conc_loc, bal_conc_scale = concoder_output
             unb_conc = pyro.sample(
                 "unb_conc",
@@ -779,6 +771,7 @@ class Maudy(nn.Module):
                     1
                 ),
             )
+            # lower bound on observed concentrations
             latent_bal_conc = pyro.sample(
                 "latent_bal_conc",
                 dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
@@ -788,7 +781,7 @@ class Maudy(nn.Module):
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
-                    "fdx_ratio", dist.LogNormal(fdx_contr, 0.1).to_event(1)
+                    "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
 
@@ -802,62 +795,11 @@ class Maudy(nn.Module):
                 dc if self.has_allostery else None,
                 kcat_drain, 1e-9,
             )
-        free_enz_ki_denom = get_competitive_inhibition_denom(
-            conc,
-            ki,
-            self.ki_conc_idx,
-            self.ki_idx,
-        ) if self.has_ci else 0
-        free_enzyme_ratio = 1 / (free_enz_km_denom + free_enz_ki_denom)
-        vmax = get_vmax(kcat, enz_conc)
-        rev = get_reversibility(
-            self.S_enz_thermo, dgr, conc, self.transported_charge, psi
-        )
-        sat = get_saturation(
-            conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
-        )
-        allostery = (
-            get_allostery(
-                conc,
-                free_enzyme_ratio,
-                tc,
-                dc,
-                self.allostery_activation,
-                self.allostery_idx,
-                self.conc_allostery_idx,
-                self.subunits,
-            )
-            if self.has_allostery
-            else torch.ones_like(vmax)
-        )
-        flux = (
-            vmax
-            * rev
-            * sat
-            * allostery.reshape(len(self.experiments), len(self.sub_km_idx))
-        )
-        # TODO: small drain correction from config
-        drain = (
-            get_kinetic_multi_drain(
-                kcat_drain,
-                conc,
-                self.sub_conc_drain_idx,
-                self.prod_conc_drain_idx,
-                self.substrate_drain_S,
-                self.product_drain_S,
-                1e-9,
-            )
-            if kcat_drain.size()[0]
-            else None
-        )
-        all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
-        ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
-        if penalize_ss:
-            pyro.factor(
-                "steady_state_dev",
-                (ssd.abs() / (latent_bal_conc + 1e-13)).sum(),
-                has_rsample=True,
-            )
+            ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
+            
+            if penalize_ss:
+                ssd_factor = pyro.deterministic("ssd_factor", ssd.abs() / (latent_bal_conc + 1e-13), event_dim=1)
+                pyro.factor("steady_state_dev", ssd_factor.sum(dim=-1), has_rsample=True)
 
     def print_inputs(self):
         print(

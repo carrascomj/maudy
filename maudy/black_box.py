@@ -67,8 +67,12 @@ class BaseConcCoder(nn.Module):
                     nn.ReLU(),
                     nn.Linear(met_dims[-2], met_dims[-1]),
                 ),
-                # scale layer
-                nn.Sequential(nn.Linear(met_dims[-1], met_dims[-1]), nn.Softplus()),
+                nn.Sequential(  # scale layer
+                    nn.Linear(met_dims[-1], met_dims[-2]),
+                    nn.ReLU(),
+                    nn.Linear(met_dims[-2], met_dims[-1]),
+                    nn.Softplus(),
+                ),
             ],
         )
 
