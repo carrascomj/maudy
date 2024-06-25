@@ -157,3 +157,54 @@ def get_allostery(
         * (free_enzyme_ratio[..., reac_idx] * inh_num / act_denom) ** subunits
     )
     return out
+
+
+def compute_flux(
+    model,
+    conc, km, ki,
+    kcat, enz_conc,
+    dgr, psi,
+    tc, dc,
+    kcat_drain, drain_km
+):
+    """Compute all the flux terms."""
+    free_enz_km_denom = get_free_enzyme_ratio_denom(
+        conc, km,
+        model.sub_conc_idx, model.sub_km_idx,
+        model.prod_conc_idx, model.prod_km_idx,
+        model.substrate_S, model.product_S,
+    )
+    free_enz_ki_denom = get_competitive_inhibition_denom(
+        conc, ki, model.ki_conc_idx, model.ki_idx
+    ) if model.has_ci else 0
+    free_enzyme_ratio = 1 / (free_enz_km_denom + free_enz_ki_denom)
+    vmax = get_vmax(kcat, enz_conc)
+    rev = get_reversibility(
+        model.S_enz_thermo, dgr, conc, model.transported_charge, psi
+    )
+    sat = get_saturation(
+        conc, km, free_enzyme_ratio, model.sub_conc_idx, model.sub_km_idx
+    )
+    allostery = (
+        get_allostery(
+            conc, free_enzyme_ratio,
+            tc,
+            dc,
+            model.allostery_activation, model.allostery_idx,
+            model.conc_allostery_idx, model.subunits,
+        )
+        if model.has_allostery
+        else torch.ones_like(vmax)
+    ).reshape(sat.shape[0], len(model.sub_km_idx))
+    flux = vmax * rev * sat * allostery 
+    drain = (
+        get_kinetic_multi_drain(
+            kcat_drain, conc,
+            model.sub_conc_drain_idx, model.prod_conc_drain_idx,
+            model.substrate_drain_S, model.product_drain_S,
+            drain_km,
+        )
+        if kcat_drain.size()[0]
+        else None
+    )
+    return torch.cat([drain, flux], dim=1) if drain is not None else flux

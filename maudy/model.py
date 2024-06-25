@@ -11,6 +11,7 @@ from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from .black_box import BaseConcCoder, fdx_head, unb_opt_head
 from .kinetics import (
+    compute_flux,
     get_allostery,
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -791,16 +792,16 @@ class Maudy(nn.Module):
                 )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
 
-        free_enz_km_denom = get_free_enzyme_ratio_denom(
-            conc,
-            km,
-            self.sub_conc_idx,
-            self.sub_km_idx,
-            self.prod_conc_idx,
-            self.prod_km_idx,
-            self.substrate_S,
-            self.product_S,
-        )
+            all_flux = compute_flux(
+                self,
+                conc, km,
+                ki if self.has_ci else None,
+                kcat, enz_conc,
+                dgr, psi,
+                tc if self.has_allostery else None,
+                dc if self.has_allostery else None,
+                kcat_drain, 1e-9,
+            )
         free_enz_ki_denom = get_competitive_inhibition_denom(
             conc,
             ki,
