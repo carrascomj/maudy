@@ -18,7 +18,7 @@ asttokens==2.4.1
 click==8.1.7
     # via maud-metabolic-models
     # via typer-slim
-cmdstanpy==1.2.3
+cmdstanpy==1.2.4
     # via maud-metabolic-models
 comm==0.2.2
     # via ipykernel
@@ -26,7 +26,7 @@ contourpy==1.2.1
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
-debugpy==1.8.1
+debugpy==1.8.2
     # via ipykernel
 decorator==5.1.1
     # via ipython
@@ -36,11 +36,11 @@ dm-tree==0.1.8
     # via arviz
 executing==2.0.1
     # via stack-data
-filelock==3.14.0
+filelock==3.15.4
     # via torch
 fonttools==4.53.0
     # via matplotlib
-fsspec==2024.5.0
+fsspec==2024.6.0
     # via torch
 h5netcdf==1.3.0
     # via arviz
@@ -71,7 +71,7 @@ matplotlib==3.9.0
 matplotlib-inline==0.1.7
     # via ipykernel
     # via ipython
-maud-metabolic-models @ git+https://github.com/biosustain/Maud@99ecc353c990f44933febe4876d4aac9b6f885bd
+maud-metabolic-models @ git+https://github.com/carrascomj/Maud@9747fe63f8627cffcaf38413ea412abebc0dd952
     # via maudy
 mizani==0.11.4
     # via plotnine
@@ -129,7 +129,7 @@ nvidia-nvtx-cu12==12.1.105
     # via torch
 opt-einsum==3.3.0
     # via pyro-ppl
-packaging==24.0
+packaging==24.1
     # via arviz
     # via h5netcdf
     # via ipykernel
@@ -152,7 +152,7 @@ pexpect==4.9.0
     # via ipython
 pillow==10.3.0
     # via matplotlib
-pip==24.0
+pip==24.1
     # via maud-metabolic-models
 platformdirs==4.2.2
     # via jupyter-core
@@ -165,7 +165,7 @@ ptyprocess==0.7.0
     # via pexpect
 pure-eval==0.2.2
     # via stack-data
-pydantic==2.7.3
+pydantic==2.7.4
     # via maud-metabolic-models
 pydantic-core==2.18.4
     # via pydantic
@@ -186,15 +186,15 @@ pytz==2024.1
 pyzmq==26.0.3
     # via ipykernel
     # via jupyter-client
-ruff==0.4.7
-scipy==1.13.1
+ruff==0.4.10
+scipy==1.14.0
     # via arviz
     # via maud-metabolic-models
     # via mizani
     # via plotnine
     # via statsmodels
     # via xarray-einstats
-setuptools==70.0.0
+setuptools==70.1.1
     # via arviz
 six==1.16.0
     # via asttokens
@@ -211,7 +211,7 @@ sympy==1.12.1
     # via torch
 toml==0.10.2
     # via maud-metabolic-models
-torch==2.3.0
+torch==2.3.1
     # via maudy
     # via pyro-ppl
 tornado==6.4.1
@@ -230,7 +230,7 @@ traitlets==5.14.3
     # via matplotlib-inline
 typer-slim==0.12.3
     # via maudy
-typing-extensions==4.12.1
+typing-extensions==4.12.2
     # via arviz
     # via pydantic
     # via pydantic-core
@@ -240,7 +240,7 @@ tzdata==2024.1
     # via pandas
 wcwidth==0.2.13
     # via prompt-toolkit
-xarray==2024.5.0
+xarray==2024.6.0
     # via arviz
     # via xarray-einstats
 xarray-einstats==0.7.0

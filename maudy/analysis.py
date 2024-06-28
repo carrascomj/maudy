@@ -106,6 +106,7 @@ def predict(
     maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]
 ) -> dict[Any, torch.Tensor]:
     """Run posterior predictive check."""
+    maudy.concoder.set_dropout(0.0)
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
     with torch.no_grad():
         return Predictive(

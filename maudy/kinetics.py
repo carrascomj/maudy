@@ -89,7 +89,7 @@ def get_reversibility(
     return 1 - torch.exp(
         (
             dgr.unsqueeze(0)
-            + trans_charge.unsqueeze(0) * psi.unsqueeze(1) * F
+            + trans_charge.unsqueeze(0) * psi * F
             + RT * (conc.log() @ S)
         )
         / RT

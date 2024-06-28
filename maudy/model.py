@@ -417,17 +417,17 @@ class Maudy(nn.Module):
             )
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         nn_config = maud_input._maudy_config.neural_network
-        # Setup the various neural networks used in guide
+        # Setup the various neural networks
         nn_decoder = BaseConcCoder(
             met_dims=[len(self.non_optimized_unbalanced_idx)]
-            + nn_config.met_dims
+            + [int(n/4) for n in nn_config.met_dims]
             + [len(self.balanced_mics_idx)],
             reac_dims=[len(enzymatic_reactions)] + nn_config.reac_dims,
-            km_dims=[len(self.km_loc)] + nn_config.km_dims + [len(self.balanced_mics_idx)],
+            km_dims=[len(self.km_loc)] + [int(n/2) for n in nn_config.km_dims] + [len(self.balanced_mics_idx)],
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
-            drop_in=True,
+            drop_out=True,
         )
         nn_encoder = BaseConcCoder(
             met_dims=[len(self.non_optimized_unbalanced_idx)]
@@ -438,7 +438,8 @@ class Maudy(nn.Module):
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
-            obs_flux_dim=self.obs_fluxes.shape[-1]
+            obs_flux_dim=self.obs_fluxes.shape[-1],
+            drop_out=True,
         )
         if self.has_fdx:
             fdx_head(nn_decoder)
@@ -466,6 +467,7 @@ class Maudy(nn.Module):
         obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
         penalize_ss: bool = True,
+        annealing_factor: float = 1.0,
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
@@ -557,18 +559,20 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_contr = concoder_output.pop()
             bal_conc_loc, bal_conc_scale = concoder_output
-            unb_conc = pyro.sample(
-                "unb_conc",
-                dist.LogNormal(unb_conc_param_loc_full, self.unb_conc_scale).to_event(
-                    1
-                ),
-            )
+            with pyro.poutine.scale(scale=annealing_factor):
+                unb_conc = pyro.sample(
+                    "unb_conc",
+                    dist.LogNormal(unb_conc_param_loc_full, self.unb_conc_scale).to_event(
+                        1
+                    ),
+                )
             # lower bound on the observed scales (if any)
             scales = torch.where(torch.isnan(self.obs_conc_std) | (bal_conc_scale > self.obs_conc_std), bal_conc_scale, self.obs_conc_std)
-            latent_bal_conc = pyro.sample(
-                "latent_bal_conc",
-                dist.LogNormal(bal_conc_loc, scales).to_event(1),
-            )
+            with pyro.poutine.scale(scale=annealing_factor):
+                latent_bal_conc = pyro.sample(
+                    "latent_bal_conc",
+                    dist.LogNormal(bal_conc_loc, scales).to_event(1),
+                )
             pyro.deterministic("ln_bal_conc", bal_conc_loc)
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = latent_bal_conc
@@ -697,6 +701,7 @@ class Maudy(nn.Module):
         obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
         penalize_ss: bool = False,
+        annealing_factor: float = 1.0,
     ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
@@ -793,17 +798,15 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             bal_conc_loc, bal_conc_scale = concoder_output
-            unb_conc = pyro.sample(
-                "unb_conc",
-                dist.LogNormal(unb_conc_param_loc_full, self.unb_conc_scale).to_event(
-                    1
-                ),
-            )
-            # lower bound on observed concentrations
-            latent_bal_conc = pyro.sample(
-                "latent_bal_conc",
-                dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
-            )
+            with pyro.poutine.scale(scale=annealing_factor):
+                unb_conc = pyro.sample(
+                    "unb_conc",
+                    dist.LogNormal(unb_conc_param_loc_full, self.unb_conc_scale).to_event( 1 ),
+                )
+                latent_bal_conc = pyro.sample(
+                    "latent_bal_conc",
+                    dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
+                )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = latent_bal_conc
             conc[:, self.unbalanced_mics_idx] = unb_conc
@@ -828,12 +831,6 @@ class Maudy(nn.Module):
             if penalize_ss:
                 ssd_factor = pyro.deterministic("ssd_factor", ssd.abs() / (latent_bal_conc + 1e-13), event_dim=1)
                 pyro.factor("steady_state_dev", ssd_factor.sum(dim=-1), has_rsample=True)
-        if penalize_ss:
-            vterm = variance_regularization(
-                bal_conc_loc, epsilon=1e-6,
-                gamma=self.obs_conc_std[self.obs_conc_mask].max(),
-            )
-            pyro.factor("V_term", -vterm, has_rsample=True)
 
     def print_inputs(self):
         print(
@@ -844,12 +841,3 @@ class Maudy(nn.Module):
 
     def get_obs(self):
         return self.obs_fluxes, self.obs_conc
-
-
-def variance_regularization(log_z: torch.Tensor, gamma: float = 1.0, epsilon: float = 1e-4) -> torch.Tensor:
-    # we are calculation the varinace in log space,
-    # so we don't need to calculate the scale
-    var_log_z = log_z.var(dim=0, unbiased=False) + epsilon
-    std_log_z = torch.sqrt(var_log_z)   
-    std_loss = torch.mean(torch.nn.functional.relu(gamma - std_log_z))
-    return std_loss

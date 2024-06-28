@@ -16,7 +16,7 @@ arviz==0.18.0
 click==8.1.7
     # via maud-metabolic-models
     # via typer-slim
-cmdstanpy==1.2.3
+cmdstanpy==1.2.4
     # via maud-metabolic-models
 contourpy==1.2.1
     # via matplotlib
@@ -26,11 +26,11 @@ depinfo==1.7.0
     # via maud-metabolic-models
 dm-tree==0.1.8
     # via arviz
-filelock==3.14.0
+filelock==3.15.4
     # via torch
 fonttools==4.53.0
     # via matplotlib
-fsspec==2024.5.0
+fsspec==2024.6.0
     # via torch
 h5netcdf==1.3.0
     # via arviz
@@ -47,7 +47,7 @@ markupsafe==2.1.5
 matplotlib==3.9.0
     # via arviz
     # via maud-metabolic-models
-maud-metabolic-models @ git+https://github.com/biosustain/Maud@99ecc353c990f44933febe4876d4aac9b6f885bd
+maud-metabolic-models @ git+https://github.com/carrascomj/Maud@9747fe63f8627cffcaf38413ea412abebc0dd952
     # via maudy
 mpmath==1.3.0
     # via sympy
@@ -97,7 +97,7 @@ nvidia-nvtx-cu12==12.1.105
     # via torch
 opt-einsum==3.3.0
     # via pyro-ppl
-packaging==24.0
+packaging==24.1
     # via arviz
     # via h5netcdf
     # via matplotlib
@@ -109,9 +109,9 @@ pandas==2.2.2
     # via xarray
 pillow==10.3.0
     # via matplotlib
-pip==24.0
+pip==24.1
     # via maud-metabolic-models
-pydantic==2.7.3
+pydantic==2.7.4
     # via maud-metabolic-models
 pydantic-core==2.18.4
     # via pydantic
@@ -126,11 +126,11 @@ python-dateutil==2.9.0.post0
     # via pandas
 pytz==2024.1
     # via pandas
-scipy==1.13.1
+scipy==1.14.0
     # via arviz
     # via maud-metabolic-models
     # via xarray-einstats
-setuptools==70.0.0
+setuptools==70.1.1
     # via arviz
 six==1.16.0
     # via python-dateutil
@@ -141,7 +141,7 @@ sympy==1.12.1
     # via torch
 toml==0.10.2
     # via maud-metabolic-models
-torch==2.3.0
+torch==2.3.1
     # via maudy
     # via pyro-ppl
 tqdm==4.66.4
@@ -150,7 +150,7 @@ tqdm==4.66.4
     # via pyro-ppl
 typer-slim==0.12.3
     # via maudy
-typing-extensions==4.12.1
+typing-extensions==4.12.2
     # via arviz
     # via pydantic
     # via pydantic-core
@@ -158,7 +158,7 @@ typing-extensions==4.12.1
     # via typer-slim
 tzdata==2024.1
     # via pandas
-xarray==2024.5.0
+xarray==2024.6.0
     # via arviz
     # via xarray-einstats
 xarray-einstats==0.7.0
