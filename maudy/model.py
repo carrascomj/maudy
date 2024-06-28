@@ -32,6 +32,29 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
+def pretty_print_tensor_with_big_brackets(tensor):
+    # Ensure the tensor is a float type for proper formatting
+    tensor = tensor.float()
+    # Convert tensor to a list of lists for easy printing
+    tensor_list = tensor.tolist()
+    # Pretty print each element with 4 decimal places
+    formatted_tensor = [[f"{element:.4f}" for element in row] for row in tensor_list]
+    
+    # Define the big bracket components
+    top_bracket = "⎡ "
+    middle_bracket = "⎢ "
+    bottom_bracket = "⎣ "
+
+    # Print the formatted tensor with big brackets
+    for i, row in enumerate(formatted_tensor):
+        if i == 0:
+            print(top_bracket + "  ".join(row) + " ⎤")
+        elif i == len(formatted_tensor) - 1:
+            print(bottom_bracket + "  ".join(row) + " ⎦")
+        else:
+            print(middle_bracket + "  ".join(row) + " ⎥")
+
+
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput):
         """Initialize the priors of the model.
@@ -400,26 +423,28 @@ class Maudy(nn.Module):
             + nn_config.met_dims
             + [len(self.balanced_mics_idx)],
             reac_dims=[len(enzymatic_reactions)] + nn_config.reac_dims,
-            km_dims=[len(self.km_loc)] + nn_config.km_dims,
+            km_dims=[len(self.km_loc)] + nn_config.km_dims + [len(self.balanced_mics_idx)],
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
+            drop_in=True,
         )
         nn_encoder = BaseConcCoder(
-            met_dims=[len(self.balanced_mics_idx)]
+            met_dims=[len(self.non_optimized_unbalanced_idx)]
             + nn_config.met_dims
             + [len(self.balanced_mics_idx)],
             reac_dims=[len(enzymatic_reactions)] + nn_config.reac_dims,
-            km_dims=[len(self.km_loc)] + nn_config.km_dims,
+            km_dims=[len(self.km_loc)] + nn_config.km_dims + [len(self.balanced_mics_idx)],
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
-            obs_flux_dim=self.obs_fluxes.shape[-1],
+            obs_flux_dim=self.obs_fluxes.shape[-1]
         )
         if self.has_fdx:
             fdx_head(nn_decoder)
             fdx_head(nn_encoder)
-        if len(self.optimized_unbalanced_idx.size()) != 0:
+        self.has_opt_unb = self.optimized_unbalanced_idx.numel() != 0
+        if self.has_opt_unb:
             unb_opt_head(nn_decoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_decoder
@@ -484,6 +509,10 @@ class Maudy(nn.Module):
                 "tc", dist.LogNormal(self.tc_loc, self.tc_scale).to_event(1)
             )
             rest = torch.cat([rest, tc, dc], dim=-1)
+        # TODO: need to take this from the config (and done in th epalte)
+        psi = pyro.sample(
+            "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
+        )
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -493,7 +522,8 @@ class Maudy(nn.Module):
             )
             unb_conc_param_loc = pyro.param(
                 "unb_conc_param_loc",
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
+                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
+                event_dim=1
             )
             kcat_drain = (
                 pyro.sample(
@@ -503,14 +533,10 @@ class Maudy(nn.Module):
                 if self.drain_mean.shape[1]
                 else self.float_tensor([])
             )
-            # TODO: need to take this from the config
-            psi = pyro.sample(
-                "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
-            )
             # there is a bug in Predict(parallel=True) that may add extra dims
             # and, thus, the squeezes in 1-dim variables
             concoder_output = self.concoder(
-                unb_conc_param_loc,
+                unb_conc_param_loc.exp(),
                 dgr,
                 enzyme_conc,
                 kcat.squeeze(0),
@@ -523,7 +549,7 @@ class Maudy(nn.Module):
                 unb_conc_param_loc
             )
             # in reverse order that additional head outputs may have been added
-            if len(self.optimized_unbalanced_idx.size()) != 0:
+            if self.has_opt_unb:
                 unb_optimized = concoder_output.pop()
                 unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = (
                     unb_optimized
@@ -716,6 +742,8 @@ class Maudy(nn.Module):
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
 
+        psi_mean = pyro.param("psi_mean", self.float_tensor([-0.110]))
+        psi = pyro.sample("psi", dist.Normal(psi_mean, 0.01))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
@@ -726,11 +754,9 @@ class Maudy(nn.Module):
                     enzyme_concs_param_loc, self.enzyme_concs_scale
                 ).to_event(1),
             )
-            psi_mean = pyro.param("psi_mean", self.float_tensor([-0.110]))
-            psi = pyro.sample("psi", dist.Normal(psi_mean, 0.01))
-            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean)
+            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1)
             drain_std = pyro.param(
-                "drain_std", lambda: self.drain_std, constraint=Positive
+                "drain_std", lambda: self.drain_std, constraint=Positive, event_dim=1
             )
             kcat_drain = (
                 pyro.sample(
@@ -740,24 +766,26 @@ class Maudy(nn.Module):
                 if self.drain_mean.shape[1]
                 else self.float_tensor([])
             )
+            unb_conc_param_loc = pyro.param(
+                "unb_conc_param_loc",
+                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
+                event_dim=1,
+            )
             # if inference, use the concoder
             if obs_conc is None and obs_flux is None:
-                # prepare NN conc input, remains 1 for unbalanced optiimzed mets
-                conc_nn_input = self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
                 concoder_output = self.concoder(
-                    conc_nn_input, dgr, enz_conc, kcat, kcat_drain, km, rest
+                    unb_conc_param_loc, dgr, enz_conc, kcat, kcat_drain, km, rest
                 )
             else:
-                conc_nn_input = torch.where(torch.isnan(obs_conc), 0, obs_conc)
                 concoder_output = self.concdecoder(
-                    conc_nn_input, dgr, enz_conc, kcat, kcat_drain, km, rest, obs_flux
+                    unb_conc_param_loc.exp(), dgr, enz_conc, kcat, kcat_drain, km, rest, obs_flux / obs_flux[0,:].mean(0)
                 )
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
+                unb_conc_param_loc
             )
             # in reverse order that additional head outputs may have been added
-            if len(self.optimized_unbalanced_idx.size()) != 0:
+            if self.has_opt_unb:
                 unb_optimized = concoder_output.pop()
                 unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = (
                     unb_optimized
@@ -800,6 +828,12 @@ class Maudy(nn.Module):
             if penalize_ss:
                 ssd_factor = pyro.deterministic("ssd_factor", ssd.abs() / (latent_bal_conc + 1e-13), event_dim=1)
                 pyro.factor("steady_state_dev", ssd_factor.sum(dim=-1), has_rsample=True)
+        if penalize_ss:
+            vterm = variance_regularization(
+                bal_conc_loc, epsilon=1e-6,
+                gamma=self.obs_conc_std[self.obs_conc_mask].max(),
+            )
+            pyro.factor("V_term", -vterm, has_rsample=True)
 
     def print_inputs(self):
         print(
@@ -810,3 +844,12 @@ class Maudy(nn.Module):
 
     def get_obs(self):
         return self.obs_fluxes, self.obs_conc
+
+
+def variance_regularization(log_z: torch.Tensor, gamma: float = 1.0, epsilon: float = 1e-4) -> torch.Tensor:
+    # we are calculation the varinace in log space,
+    # so we don't need to calculate the scale
+    var_log_z = log_z.var(dim=0, unbiased=False) + epsilon
+    std_log_z = torch.sqrt(var_log_z)   
+    std_loss = torch.mean(torch.nn.functional.relu(gamma - std_log_z))
+    return std_loss
