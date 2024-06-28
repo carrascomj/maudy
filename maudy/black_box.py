@@ -17,64 +17,71 @@ class BaseConcCoder(nn.Module):
         ki_dim: int = 0,
         tc_dim: int = 0,
         obs_flux_dim: int = 0,
+        drop_out: bool = False,
     ):
         super().__init__()
         # metabolites
         self.met_dims = met_dims
-        self.met_backbone = nn.Sequential(
-            *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(met_dims[:-1], met_dims[1:])
-            ]
-        )
         # reactions
+        n_enz_reac = reac_dims[0]
         reac_dims[0] += drain_dim
-        self.reac_backbone = nn.Sequential(
-            *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(reac_dims[:-1], reac_dims[1:])
-            ]
-        )
-        # before passing it to the reac_backbone, we need to perform a convolution
-        # over the reaction features (dgr, enz_conc, etc.) to a single feature
-        self.reac_conv = nn.Sequential(nn.Conv1d(3, 1, 1), nn.ReLU())
+        self.reac_backbone = nn.Linear(reac_dims[0], reac_dims[-1])
         # kms
-        self.km_backbone = nn.Sequential(
+        constant_dims = km_dims.copy()
+        constant_dims[0] = constant_dims[0] + 2 * n_enz_reac + ki_dim + tc_dim * 2
+        self.constant_backbone = nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
-                for in_dim, out_dim in zip(km_dims[:-1], km_dims[1:])
-            ]
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.SiLU())
+                for in_dim, out_dim in zip(constant_dims[:-1], constant_dims[1:])
+            ],
         )
+        emb_dims = met_dims.copy()
+        emb_dims[0] = reac_dims[0] + met_dims[0] + obs_flux_dim
+        self.emb_layer = nn.Sequential(*[
+            nn.Sequential(nn.Linear(in_dim, out_dim), nn.SiLU())
+            for in_dim, out_dim in zip(emb_dims[:-1], emb_dims[1:])
+        ], nn.Dropout1d() if drop_out else nn.Identity())
 
-        self.emb_layer = nn.Sequential(
-            nn.Linear(
-                reac_dims[-1]
-                + met_dims[-1]
-                + km_dims[-1]
-                + ki_dim
-                + tc_dim * 2
-                + obs_flux_dim,
-                met_dims[-2],
-            ),
-            nn.ReLU(),
-            nn.Linear(met_dims[-2], met_dims[-1]),
-            nn.SiLU(),
-        )
+        out_dims = met_dims.copy()
+        out_dims[0] = out_dims[-1]
         self.out_layers = nn.ModuleList(
             [
                 nn.Sequential(  # loc layer
-                    nn.Linear(met_dims[-1], met_dims[-2]),
-                    nn.ReLU(),
-                    nn.Linear(met_dims[-2], met_dims[-1]),
+                    *[
+                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
+                        for in_dim, out_dim in zip(
+                            out_dims[:-1], out_dims[1:]
+                        )
+                    ],
+                    nn.Linear(out_dims[-1], out_dims[-1]),
                 ),
                 nn.Sequential(  # scale layer
-                    nn.Linear(met_dims[-1], met_dims[-2]),
-                    nn.ReLU(),
-                    nn.Linear(met_dims[-2], met_dims[-1]),
-                    nn.Softplus(),
+                    *[
+                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
+                        for in_dim, out_dim in zip(
+                            out_dims[:-1], out_dims[1:]
+                        )
+                    ],
+                    nn.Linear(out_dims[-1], out_dims[-1]),
+                    nn.Softplus()  # makes the output positive
                 ),
             ],
         )
+        self._initialize_weights(self)
+
+    def _initialize_weights(self, module):
+        for m in module.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+
+    def set_dropout(self: nn.Module, p: float = 0.0):
+        for m in self.modules():
+            if isinstance(m, nn.Dropout1d):
+                m.p = p
+
 
     def forward(
         self,
@@ -87,36 +94,17 @@ class BaseConcCoder(nn.Module):
         rest: torch.Tensor,
         obs_flux: Optional[torch.Tensor] = None,
     ) -> list[torch.Tensor]:
-        out = self.met_backbone(conc)
-        enz_reac_features = torch.stack(
-            [
-                dgr.repeat(enz_conc.shape[0]).reshape(-1, dgr.shape[0]),
-                kcat.repeat(enz_conc.shape[0]).reshape(-1, kcat.shape[0]),
-                enz_conc,
-            ],
-            dim=1,
-        )
-        enz_reac_features = self.reac_conv(enz_reac_features)
-        enz_reac_features = enz_reac_features.squeeze(1)
-        reac_out = self.reac_backbone(torch.cat([enz_reac_features, drains], dim=-1))
-        km_out = self.km_backbone(km.repeat(enz_conc.shape[0]).reshape(-1, km.shape[0]))
-        out = self.emb_layer(
-            torch.cat(
-                [
-                    out,
-                    reac_out,
-                    km_out,
-                    rest.repeat(enz_conc.shape[0]).reshape(
-                        enz_conc.shape[0], rest.shape[0]
-                    ),
-                    obs_flux
-                    if obs_flux is not None
-                    else torch.tensor([], device=out.device),
-                ],
-                dim=-1,
-            )
-        )
-        out = (out - torch.mean(out, dim=-1).unsqueeze(1)) / torch.std(out)
+        # these are all small numbers so we need to normalize
+        # to avoid collapsing the batch dimension
+        reac_in = torch.cat((enz_conc, drains), dim=1)
+        reac_in = reac_in
+        constant_in = torch.cat([dgr, kcat, km, rest.flatten()])
+        constant_q = self.constant_backbone(constant_in)
+        if obs_flux is not None:
+            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux), dim=1))
+        else:
+            k = self.emb_layer(torch.cat((conc, reac_in), dim=1))
+        out = k * constant_q.unsqueeze(0)
         return [out_layer(out) for out_layer in self.out_layers]
 
 
@@ -136,7 +124,7 @@ def unb_opt_head(concoder: BaseConcCoder, unb_dim: int):
     met_dims = concoder.met_dims
     unb_met_loc_layer = nn.Sequential(
         nn.Linear(met_dims[-1], met_dims[-2]),
-        nn.ReLU(),
+        nn.SiLU(),
         nn.Linear(met_dims[-2], unb_dim),
     )
     concoder.out_layers.append(unb_met_loc_layer)

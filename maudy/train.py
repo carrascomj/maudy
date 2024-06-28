@@ -4,12 +4,13 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 import pyro
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
-from pyro.optim import ClippedAdam
+from pyro.optim.clipped_adam import ClippedAdam
+from pyro.optim import PyroOptim
 from tqdm import tqdm
 from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
@@ -18,12 +19,23 @@ from .io import load_maudy_config
 from .model import Maudy
 
 
+def anneal(epoch, annealing_epochs, min_factor):
+    """Get linear interpolation between 1 and `min_factor` at `epoch`."""
+    return (
+        min_factor
+        + (1.0 - min_factor) * (float(epoch + 1) / float(annealing_epochs))
+        if annealing_epochs > 0 and epoch < annealing_epochs
+        else 1.0
+    )
+
+
 def train(
     maud_input: MaudInput,
     num_epochs: int,
     penalize_ss: bool,
     eval_flux: bool,
     eval_conc: bool,
+    annealing_epochs: int,
 ):
     pyro.clear_param_store()
     # Enable optional validation warnings
@@ -42,8 +54,16 @@ def train(
     # Setup an optimizer (Adam) and learning rate scheduler.
     # We start with a moderately high learning rate (0.006) and
     # reduce to 6e-7 over the course of training.
-    # optimizer = ClippedAdam({"lr": 0.0006, "lrd": 0.0001 ** (1 / num_epochs)})
-    optimizer = ClippedAdam({"lr": 0.0006, "lrd": 0.0001 ** (1 / num_epochs)})
+    # Create a list of parameter groups
+    optimizer = PyroOptim(
+        ClippedAdam,
+        optim_args={"lrd": 0.99996, "lr": 0.0003},
+    )
+    # optimizer = PyroOptim(
+    #     ClippedAdam,
+    #     optim_args=lambda param_name: {"lr": 0.0006, "lrd": 0.0001 ** (1/num_epochs)} if param_name.startswith("maudy.concoder") or param_name.startswith("maudy.concdecoder") else {"lr": 0.0006, "lrd": 0.0001 ** (1/num_epochs)}
+    # )
+
     # Tell Pyro to enumerate out y when y is unobserved.
     # (By default y would be sampled from the guide)
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
@@ -55,10 +75,11 @@ def train(
     svi = SVI(maudy.model, guide, optimizer, elbo)
 
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
-    for _ in progress_bar:
-        loss = svi.step(obs_flux, obs_conc, penalize_ss)
-        lr = list(optimizer.get_state().values())[0]["param_groups"][0]["lr"]
-        progress_bar.set_postfix(loss=f"{loss:+.2e}", lr=f"{lr:.2e}")
+    for epoch in progress_bar:
+        t = anneal(epoch, annealing_epochs, 0.2)
+        loss = svi.step(obs_flux, obs_conc, penalize_ss, t)
+        lr = optimizer.get_state()['km_scale']["param_groups"][0]["lr"]
+        progress_bar.set_postfix(loss=f"{loss:+.2e}", lr=f"{lr:.2e}", T=f"{t:.2f}")
     return maudy, optimizer
 
 
@@ -69,6 +90,7 @@ def get_timestamp():
 def sample(
     maud_dir: Path,
     num_epochs: int = 100,
+    annealing_stage: Annotated[float, "Part of training that will be annealing the KL"] = 0.2,
     out_dir: Optional[Path] = None,
     penalize_ss: bool = True,
     eval_flux: bool = True,
@@ -78,7 +100,7 @@ def sample(
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc)
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage))
     if smoke:
         return
     out = (
