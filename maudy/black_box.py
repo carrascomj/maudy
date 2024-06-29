@@ -18,6 +18,7 @@ class BaseConcCoder(nn.Module):
         tc_dim: int = 0,
         obs_flux_dim: int = 0,
         drop_out: bool = False,
+        batchnorm: bool = True,
     ):
         super().__init__()
         # metabolites
@@ -48,7 +49,7 @@ class BaseConcCoder(nn.Module):
             [
                 nn.Sequential(  # loc layer
                     *[
-                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
+                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
                         for in_dim, out_dim in zip(
                             out_dims[:-1], out_dims[1:]
                         )
@@ -57,7 +58,7 @@ class BaseConcCoder(nn.Module):
                 ),
                 nn.Sequential(  # scale layer
                     *[
-                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
+                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
                         for in_dim, out_dim in zip(
                             out_dims[:-1], out_dims[1:]
                         )
