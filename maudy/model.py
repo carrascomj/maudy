@@ -423,7 +423,9 @@ class Maudy(nn.Module):
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
-            drop_out=True,
+            # batch norm and dropout won't work without a batch dim
+            drop_out=len(self.experiments) > 1,
+            batchnorm=len(self.experiments) > 1,
         )
         if self.has_fdx:
             fdx_head(nn_encoder)
