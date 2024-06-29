@@ -128,3 +128,13 @@ def unb_opt_head(concoder: BaseConcCoder, unb_dim: int):
         nn.Linear(met_dims[-2], unb_dim),
     )
     concoder.out_layers.append(unb_met_loc_layer)
+
+
+class BaseDecoder(nn.Module):
+    def __init__(self, met_dim: int, unb_dim: int, enz_dim: int, drain_dim: int):
+        super().__init__()
+        self.loc_layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
+
+    def forward(self, met: torch.Tensor, unb: torch.Tensor, enz: torch.Tensor, drain: torch.Tensor):
+        features = torch.cat((met, unb, enz, drain), dim=1)
+        return self.loc_layer(features)
