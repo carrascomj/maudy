@@ -406,7 +406,7 @@ class Maudy(nn.Module):
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         nn_config = maud_input._maudy_config.neural_network
         # Setup the various neural networks
-        nn_decoder = BaseDecoder(
+        self.decoder = BaseDecoder(
             met_dim=len(self.balanced_mics_idx),
             unb_dim=self.unb_conc_loc.shape[1],
             enz_dim=len(enzymatic_reactions),
@@ -433,7 +433,6 @@ class Maudy(nn.Module):
         if self.has_opt_unb:
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
-        self.decoder = nn_decoder
 
     def cuda(self):
         super().cuda()
@@ -522,7 +521,6 @@ class Maudy(nn.Module):
                         self.unb_conc_scale,
                     ).to_event(1),
                 )
-            with pyro.poutine.scale(scale=annealing_factor):
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
                     dist.LogNormal(torch.full_like(self.obs_conc, 1.0), 1.0).to_event(
@@ -534,11 +532,8 @@ class Maudy(nn.Module):
                 self.decoder(latent_bal_conc, unb_conc, enzyme_conc, kcat_drain),
                 event_dim=1,
             )
-            bal_conc = pyro.sample(
-                "bal_conc", dist.LogNormal(ln_bal_conc, 0.1).to_event(1)
-            )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = bal_conc
+            conc[:, self.balanced_mics_idx] = ln_bal_conc.exp()
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
@@ -637,22 +632,32 @@ class Maudy(nn.Module):
                 else None
             )
             all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
-            pyro.deterministic(
+            ssd = pyro.deterministic(
                 "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx], event_dim=1
             )
             pyro.sample(
                 "y_flux_train",
-                dist.Normal(true_obs_flux, self.obs_fluxes_std).to_event(1),
+                dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
             pyro.sample(
                 "y_conc_train",
                 dist.LogNormal(
-                    bal_conc.log()[self.obs_conc_mask],
-                    self.obs_conc_std[self.obs_conc_mask],
+                    ln_bal_conc[self.obs_conc_mask],
+                    self.obs_conc_std[self.obs_conc_mask] / annealing_factor,
                 ).to_event(1),
                 obs=obs_conc[self.obs_conc_mask] if obs_conc is not None else None,
             )
+            if penalize_ss:
+                ssd_factor = pyro.deterministic(
+                    "ssd_factor",
+                    ssd.abs() / (ln_bal_conc.exp() + 1e-13),
+                    event_dim=1,
+                )
+                pyro.factor(
+                    "steady_state_dev",
+                    -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
+                )
 
     def float_tensor(self, x) -> torch.Tensor:
         return torch.tensor(x, device=self.water_stoichiometry.device)
@@ -754,15 +759,8 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             latent_bal_conc_loc, bal_conc_scale = concoder_output
-            bal_conc_loc = pyro.param(
-                "bal_conc_loc",
-                torch.full_like(
-                    self.obs_conc, self.obs_conc[self.obs_conc_mask].log().mean()
-                ),
-                event_dim=1,
-            )
             with pyro.poutine.scale(scale=annealing_factor):
-                unb_conc = pyro.sample(
+                pyro.sample(
                     "unb_conc",
                     dist.LogNormal(
                         unb_conc_param_loc_full, self.unb_conc_scale
@@ -772,45 +770,11 @@ class Maudy(nn.Module):
                     "latent_bal_conc",
                     dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
                 )
-                bal_conc = pyro.sample(
-                    "bal_conc",
-                    dist.LogNormal(bal_conc_loc, bal_conc_scale).to_event(1),
-                )
-            conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = bal_conc
-            conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
-                conc = torch.cat([conc, fdx_ratio], dim=1)
 
-            all_flux = compute_flux(
-                self,
-                conc,
-                km,
-                ki if self.has_ci else None,
-                kcat,
-                enz_conc,
-                dgr,
-                psi,
-                tc if self.has_allostery else None,
-                dc if self.has_allostery else None,
-                kcat_drain,
-                1e-9,
-            )
-            if penalize_ss:
-                ssd_factor = pyro.deterministic(
-                    "ssd_factor",
-                    (all_flux @ self.S.T[:, self.balanced_mics_idx].abs())
-                    / (bal_conc + 1e-13),
-                    event_dim=1,
-                )
-                pyro.factor(
-                    "steady_state_dev",
-                    ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
-                    has_rsample=True,
-                )
 
     def print_inputs(self):
         print(

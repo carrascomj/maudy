@@ -126,7 +126,7 @@ def ppc(model_output: Path, num_epochs: int = 800):
         "ssd",
         "dgr",
         "flux",
-        "bal_conc",
+        "ln_bal_conc",
     )
     maudy, _ = load(model_output)
     samples = predict(maudy, num_epochs, var_names=var_names)
