@@ -56,7 +56,7 @@ def pretty_print_tensor_with_big_brackets(tensor):
 
 
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput):
+    def __init__(self, maud_input: MaudInput, normalize: bool = False):
         """Initialize the priors of the model.
 
         maud_input: MaudInput
@@ -66,6 +66,12 @@ class Maudy(nn.Module):
         optimize_unbalanced: Optional[list[str]]
             unbalanced metabolite-in-compartment identifiers to infer as the
             output of the neural network.
+        normalize: bool, default=False
+            whether to normalize the input and output of the neural network.
+            The input is normalize such that positive values are turned to log-space
+            and drains and fluxes are multiplied by 1e6 (mumol). The output is
+            clamped between 0.6 orders of magnitude of the higher and lowest
+            observed or prior concentrations.
         """
         super().__init__()
         self.kinetic_model = maud_input.kinetic_model
@@ -403,14 +409,21 @@ class Maudy(nn.Module):
             self.S_enz_thermo = torch.cat(
                 [self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0
             )
+        self.enzymatic_reactions = enzymatic_reactions
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
         nn_config = maud_input._maudy_config.neural_network
         # Setup the various neural networks
+        # when there are very small values, we need to normalize the conc so that
+        # it does not explode
+        all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
+        min_max = (all_concs.min().item() - 0.6, all_concs.max().item() + 0.6) if normalize else None
+        self.normalize = normalize
         self.decoder = BaseDecoder(
             met_dim=len(self.balanced_mics_idx),
             unb_dim=self.unb_conc_loc.shape[1],
             enz_dim=len(enzymatic_reactions),
             drain_dim=self.drain_mean.shape[1],
+            normalize=min_max,
         )
         nn_encoder = BaseConcCoder(
             met_dims=[len(self.non_optimized_unbalanced_idx)]
@@ -426,6 +439,7 @@ class Maudy(nn.Module):
             # batch norm and dropout won't work without a batch dim
             drop_out=len(self.experiments) > 1,
             batchnorm=len(self.experiments) > 1,
+            normalize=min_max,
         )
         if self.has_fdx:
             fdx_head(nn_encoder)
@@ -523,7 +537,7 @@ class Maudy(nn.Module):
                 )
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(torch.full_like(self.obs_conc, 1.0), 1.0).to_event(
+                    dist.LogNormal(torch.full_like(self.obs_conc, -13.8155), 1.0).to_event(
                         1
                     ),
                 )
@@ -538,7 +552,7 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
                     "fdx_ratio",
-                    dist.LogNormal(self.float_tensor([1.0]), 0.1).to_event(1),
+                    dist.LogNormal(self.float_tensor([0.0]), 0.1).to_event(1),
                 )
                 conc = torch.cat([conc, fdx_ratio], dim=1)
             # log balanced concentrations
@@ -714,8 +728,6 @@ class Maudy(nn.Module):
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
 
-        psi_mean = pyro.param("psi_mean", self.float_tensor([-0.110]))
-        psi = pyro.sample("psi", dist.Normal(psi_mean, 0.01))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
@@ -744,7 +756,7 @@ class Maudy(nn.Module):
                 event_dim=1,
             )
             concoder_output = self.concoder(
-                unb_conc_param_loc.exp(), dgr, enz_conc, kcat, kcat_drain, km, rest
+                unb_conc_param_loc, dgr, enz_conc, kcat, kcat_drain, km, rest
             )
             unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
             unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
@@ -774,7 +786,6 @@ class Maudy(nn.Module):
                 fdx_ratio = pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
-
 
     def print_inputs(self):
         print(

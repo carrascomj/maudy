@@ -5,6 +5,16 @@ import torch
 import torch.nn as nn
 
 
+class Clamp(nn.Module):
+    def __init__(self, min_val: float, max_val: float):
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x.clamp(self.min_val, self.max_val)
+
+
 class BaseConcCoder(nn.Module):
     """Base neural network, outputs location and scale of balanced metabolites."""
 
@@ -19,6 +29,7 @@ class BaseConcCoder(nn.Module):
         obs_flux_dim: int = 0,
         drop_out: bool = False,
         batchnorm: bool = True,
+        normalize: Optional[tuple[float, float]] = None,
     ):
         super().__init__()
         # metabolites
@@ -38,33 +49,46 @@ class BaseConcCoder(nn.Module):
         )
         emb_dims = met_dims.copy()
         emb_dims[0] = reac_dims[0] + met_dims[0] + obs_flux_dim
-        self.emb_layer = nn.Sequential(*[
-            nn.Sequential(nn.Linear(in_dim, out_dim), nn.SiLU())
-            for in_dim, out_dim in zip(emb_dims[:-1], emb_dims[1:])
-        ], nn.Dropout1d() if drop_out else nn.Identity())
+        self.emb_layer = nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.SiLU())
+                for in_dim, out_dim in zip(emb_dims[:-1], emb_dims[1:])
+            ],
+            nn.Dropout1d() if drop_out else nn.Identity(),
+        )
 
         out_dims = met_dims.copy()
         out_dims[0] = out_dims[-1]
+        self.normalize = normalize is not None
         self.out_layers = nn.ModuleList(
             [
                 nn.Sequential(  # loc layer
                     *[
-                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
-                        for in_dim, out_dim in zip(
-                            out_dims[:-1], out_dims[1:]
+                        nn.Sequential(
+                            nn.Linear(in_dim, out_dim),
+                            nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(),
+                            nn.ReLU(),
+                            nn.Dropout1d() if drop_out else nn.Identity(),
                         )
+                        for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
                     ],
                     nn.Linear(out_dims[-1], out_dims[-1]),
+                    Clamp(normalize[0], normalize[1])
+                    if normalize is not None
+                    else nn.Identity(),
                 ),
                 nn.Sequential(  # scale layer
                     *[
-                        nn.Sequential(nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(), nn.ReLU(), nn.Dropout1d() if drop_out else nn.Identity())
-                        for in_dim, out_dim in zip(
-                            out_dims[:-1], out_dims[1:]
+                        nn.Sequential(
+                            nn.Linear(in_dim, out_dim),
+                            nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(),
+                            nn.ReLU(),
+                            nn.Dropout1d() if drop_out else nn.Identity(),
                         )
+                        for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
                     ],
                     nn.Linear(out_dims[-1], out_dims[-1]),
-                    nn.Softplus()  # makes the output positive
+                    nn.Softplus(),  # makes the output positive
                 ),
             ],
         )
@@ -77,12 +101,10 @@ class BaseConcCoder(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-
     def set_dropout(self: nn.Module, p: float = 0.0):
         for m in self.modules():
             if isinstance(m, nn.Dropout1d):
                 m.p = p
-
 
     def forward(
         self,
@@ -95,14 +117,21 @@ class BaseConcCoder(nn.Module):
         rest: torch.Tensor,
         obs_flux: Optional[torch.Tensor] = None,
     ) -> list[torch.Tensor]:
+        if self.normalize:
+            enz_conc, drains, kcat, km, rest = (
+                enz_conc.log(),
+                drains * 1e6,
+                kcat.log(),
+                km.log(),
+                rest.log(),
+            )
         # these are all small numbers so we need to normalize
         # to avoid collapsing the batch dimension
         reac_in = torch.cat((enz_conc, drains), dim=1)
-        reac_in = reac_in
         constant_in = torch.cat([dgr, kcat, km, rest.flatten()])
         constant_q = self.constant_backbone(constant_in)
         if obs_flux is not None:
-            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux), dim=1))
+            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux * 1e6), dim=1))
         else:
             k = self.emb_layer(torch.cat((conc, reac_in), dim=1))
         out = k * constant_q.unsqueeze(0)
@@ -132,10 +161,31 @@ def unb_opt_head(concoder: BaseConcCoder, unb_dim: int):
 
 
 class BaseDecoder(nn.Module):
-    def __init__(self, met_dim: int, unb_dim: int, enz_dim: int, drain_dim: int):
+    def __init__(
+        self,
+        met_dim: int,
+        unb_dim: int,
+        enz_dim: int,
+        drain_dim: int,
+        normalize: Optional[tuple[int, int]] = None,
+    ):
         super().__init__()
-        self.loc_layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
+        layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
+        self.normalize = normalize is not None
+        self.loc_layer = (
+            nn.Sequential(layer, Clamp(normalize[0], normalize[1]))
+            if normalize is not None
+            else layer
+        )
 
-    def forward(self, met: torch.Tensor, unb: torch.Tensor, enz: torch.Tensor, drain: torch.Tensor):
+    def forward(
+        self,
+        met: torch.Tensor,
+        unb: torch.Tensor,
+        enz: torch.Tensor,
+        drain: torch.Tensor,
+    ):
+        if self.normalize:
+            met, unb, enz, drain = met.log(), unb.log(), enz.log(), drain * 1e6
         features = torch.cat((met, unb, enz, drain), dim=1)
         return self.loc_layer(features)
