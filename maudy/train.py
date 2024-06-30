@@ -2,6 +2,7 @@
 
 import os
 import shutil
+from typer import Option
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional
@@ -36,13 +37,14 @@ def train(
     eval_flux: bool,
     eval_conc: bool,
     annealing_epochs: int,
+    normalize: bool,
 ):
     pyro.clear_param_store()
     # Enable optional validation warnings
     pyro.enable_validation(False)
 
     # Instantiate instance of model/guide and various neural networks
-    maudy = Maudy(maud_input)
+    maudy = Maudy(maud_input, normalize)
     if torch.cuda.is_available():
         maudy.cuda()
     obs_flux, obs_conc = maudy.get_obs()
@@ -51,19 +53,12 @@ def train(
     if not eval_conc:
         obs_conc = None
 
-    # Setup an optimizer (Adam) and learning rate scheduler.
-    # We start with a moderately high learning rate (0.006) and
-    # reduce to 6e-7 over the course of training.
-    # Create a list of parameter groups
+    lr_start = 3e-4
+    lr_end = 8e-5
     optimizer = PyroOptim(
         ClippedAdam,
-        optim_args={"lrd": 0.99996, "lr": 0.0003},
+        optim_args={"lrd": (lr_end / lr_start) ** (1 / num_epochs), "lr": lr_start},
     )
-    # optimizer = PyroOptim(
-    #     ClippedAdam,
-    #     optim_args=lambda param_name: {"lr": 0.0006, "lrd": 0.0001 ** (1/num_epochs)} if param_name.startswith("maudy.concoder") or param_name.startswith("maudy.concdecoder") else {"lr": 0.0006, "lrd": 0.0001 ** (1/num_epochs)}
-    # )
-
     # Tell Pyro to enumerate out y when y is unobserved.
     # (By default y would be sampled from the guide)
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
@@ -90,7 +85,8 @@ def get_timestamp():
 def sample(
     maud_dir: Path,
     num_epochs: int = 100,
-    annealing_stage: Annotated[float, "Part of training that will be annealing the KL"] = 0.2,
+    annealing_stage: Annotated[float, Option(help="Part of training that will be annealing the KL")] = 0.2,
+    normalize: Annotated[bool, Option(help="Whether to normalize input and output of NN")] = False,
     out_dir: Optional[Path] = None,
     penalize_ss: bool = True,
     eval_flux: bool = True,
@@ -100,7 +96,7 @@ def sample(
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage))
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
     if smoke:
         return
     out = (
