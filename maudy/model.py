@@ -11,7 +11,6 @@ from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from .black_box import BaseConcCoder, BaseDecoder, fdx_head, unb_opt_head
 from .kinetics import (
-    compute_flux,
     get_allostery,
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -728,6 +727,10 @@ class Maudy(nn.Module):
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
 
+        psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))
+        pyro.sample(
+            "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
+        )
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
