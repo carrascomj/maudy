@@ -366,14 +366,14 @@ class Maudy(nn.Module):
         self.obs_conc = torch.FloatTensor([
             [
                 conc_obs[(e, mic)][0] if (e, mic) in conc_obs else float("nan")
-                for mic in bal_mics
+                for mic in mics
             ]
             for e in self.experiments
         ])
         self.obs_conc_std = torch.FloatTensor([
             [
                 conc_obs[(e, mic)][1] if (e, mic) in conc_obs else float("nan")
-                for mic in bal_mics
+                for mic in mics
             ]
             for e in self.experiments
         ])
@@ -416,6 +416,7 @@ class Maudy(nn.Module):
         # it does not explode
         all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
         min_max = (all_concs.min().item() - 0.6, all_concs.max().item() + 0.6) if normalize else None
+        self.init_latent = all_concs.mean().item()
         self.normalize = normalize
         self.decoder = BaseDecoder(
             met_dim=len(self.balanced_mics_idx),
@@ -530,13 +531,13 @@ class Maudy(nn.Module):
                 unb_conc = pyro.sample(
                     "unb_conc",
                     dist.LogNormal(
-                        self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
+                        self.unb_conc_loc,
                         self.unb_conc_scale,
                     ).to_event(1),
                 )
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(torch.full_like(self.obs_conc, -13.8155), 1.0).to_event(
+                    dist.LogNormal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
                         1
                     ),
                 )
@@ -548,6 +549,7 @@ class Maudy(nn.Module):
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = ln_bal_conc.exp()
             conc[:, self.unbalanced_mics_idx] = unb_conc
+            conc_comp = conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
                     "fdx_ratio",
@@ -656,7 +658,7 @@ class Maudy(nn.Module):
             pyro.sample(
                 "y_conc_train",
                 dist.LogNormal(
-                    ln_bal_conc[self.obs_conc_mask],
+                    conc_comp.log()[self.obs_conc_mask],
                     self.obs_conc_std[self.obs_conc_mask] / annealing_factor,
                 ).to_event(1),
                 obs=obs_conc[self.obs_conc_mask] if obs_conc is not None else None,
