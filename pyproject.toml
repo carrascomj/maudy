@@ -6,11 +6,13 @@ authors = [
     { name = "carrascomj", email = "carrascomurielj@gmail.com" }
 ]
 dependencies = [
-    "torch>=2.3.0",
     "pyro-ppl>=1.9.1",
     "tqdm>=4.66.4",
     "typer-slim>=0.12.3",
     "maud-metabolic-models @ git+https://github.com/carrascomj/Maud",
+    "numpyro>=0.15.0",
+    "jax>=0.4.30",
+    "flax>=0.8.5",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

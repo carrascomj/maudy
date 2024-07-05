@@ -3,13 +3,14 @@ from copy import deepcopy
 from typing import Optional
 
 import pandas as pd
-import pyro
-import pyro.distributions as dist
-import torch
-import torch.nn as nn
+import numpyro
+import numpyro.distributions as dist
+from numpyro.contrib.module import flax_module
+from jax import numpy as jnp
+from jax import lax
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import BaseConcCoder, BaseDecoder, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -22,13 +23,17 @@ from .kinetics import (
 )
 
 Positive = dist.constraints.positive
+numpyro.enable_x64(True)
 
-
-def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-    mu2 = mu.pow(2)
-    sigma_sq = (scale.exp() - 1) * mu2
-    loc = torch.log(mu.pow(2) / torch.sqrt(mu2 + sigma_sq.pow(2)))
+def get_loc_from_mu_scale(mu: jnp.ndarray, scale: jnp.ndarray) -> jnp.ndarray:
+    mu2 = jnp.pow(mu, 2)
+    sigma_sq = (scale - 1) * mu2
+    loc = jnp.log(jnp.pow(mu, 2) / jnp.sqrt(mu2 + jnp.pow(sigma_sq, 2)))
     return loc
+
+
+def check_for_nans(data, name="Data"):
+    assert jnp.all(jnp.isfinite(data)), f"{name} contains NaNs or infinities"
 
 
 def pretty_print_tensor_with_big_brackets(tensor):
@@ -54,7 +59,7 @@ def pretty_print_tensor_with_big_brackets(tensor):
             print(middle_bracket + "  ".join(row) + " ⎥")
 
 
-class Maudy(nn.Module):
+class Maudy:
     def __init__(self, maud_input: MaudInput, normalize: bool = False):
         """Initialize the priors of the model.
 
@@ -72,7 +77,6 @@ class Maudy(nn.Module):
             clamped between 0.6 orders of magnitude of the higher and lowest
             observed or prior concentrations.
         """
-        super().__init__()
         self.kinetic_model = maud_input.kinetic_model
         self.maud_params = maud_input.parameters
         # 1. kcats
@@ -87,39 +91,39 @@ class Maudy(nn.Module):
             index=enzymatic_reactions,
         )
         reactions = [reac.id for reac in self.kinetic_model.reactions]
-        self.kcat_loc = torch.Tensor([
+        self.kcat_loc = jnp.array([
             kcats.loc[reac, "location"] for reac in enzymatic_reactions
         ])
-        self.kcat_scale = torch.Tensor([
+        self.kcat_scale = jnp.array([
             kcats.loc[reac, "scale"] for reac in enzymatic_reactions
         ])
         # 2. enzyme concentrations
         ec = self.maud_params.conc_enzyme_train.prior
         enzyme_concs = pd.DataFrame(ec.location, index=ec.ids[0], columns=ec.ids[1])
         # sorted by reaction in the same order as kcats
-        self.enzyme_concs_loc = torch.Tensor(enzyme_concs[enzymes].values)
+        self.enzyme_concs_loc = jnp.array(enzyme_concs[enzymes].values)
         enzyme_concs = pd.DataFrame(ec.scale, index=ec.ids[0], columns=ec.ids[1])
-        self.enzyme_concs_scale = torch.Tensor(enzyme_concs[enzymes].values)
+        self.enzyme_concs_scale = jnp.array(enzyme_concs[enzymes].values)
         # 3. drains, fluxes are then concatenated in the model as drains + enzymatic_reations
         drain = self.maud_params.drain_train.prior
         drain_mean = pd.DataFrame(
             drain.location, index=drain.ids[0], columns=drain.ids[1]
         )
-        self.drain_mean = torch.Tensor(drain_mean.values)
-        self.drain_std = torch.Tensor(
+        self.drain_mean = jnp.array(drain_mean.values)
+        self.drain_std = jnp.array(
             pd.DataFrame(drain.scale, index=drain.ids[0], columns=drain.ids[1]).values
         )
         # 4. dgfs
         dgf = self.maud_params.dgf.prior
-        self.dgf_means = torch.Tensor(
+        self.dgf_means = jnp.array(
             pd.Series(dgf.location, index=dgf.ids[0]).loc[mets]
         )
-        dgf_cov = torch.Tensor(
+        dgf_cov = jnp.array(
             pd.DataFrame(dgf.covariance_matrix, index=dgf.ids[0], columns=dgf.ids[0])
             .loc[mets, mets]
             .values
         )
-        self.dgf_cov = torch.linalg.cholesky(dgf_cov)
+        self.dgf_cov = jnp.linalg.cholesky(dgf_cov)
         self.experiments = ec.ids[0]
         self.num_reactions = len(reactions)
         self.num_mics = len(mics)
@@ -127,12 +131,12 @@ class Maudy(nn.Module):
             f"{e}_{r}" for e, r in zip(enzymes, enzymatic_reactions)
         ]
         unb_conc = self.maud_params.conc_unbalanced_train.prior
-        self.balanced_mics_idx = torch.LongTensor([
+        self.balanced_mics_idx = jnp.array([
             i for i, met in enumerate(self.kinetic_model.mics) if met.balanced
-        ])
-        self.unbalanced_mics_idx = torch.LongTensor([
+        ], dtype=int)
+        self.unbalanced_mics_idx = jnp.array([
             i for i, met in enumerate(self.kinetic_model.mics) if not met.balanced
-        ])
+        ], dtype=int)
         unb_mics = [mic for i, mic in enumerate(mics) if i in self.unbalanced_mics_idx]
         bal_mics = [mic for i, mic in enumerate(mics) if i in self.balanced_mics_idx]
         unb_config = maud_input._maudy_config.optimize_unbalanced_metabolites
@@ -142,20 +146,20 @@ class Maudy(nn.Module):
             assert (
                 not opt_not_unb
             ), f"{opt_not_unb} to be optimized are not unbalanced metabolites!"
-        self.optimized_unbalanced_idx = torch.LongTensor([
+        self.optimized_unbalanced_idx = jnp.array([
             i for i, met in enumerate(unb_mics) if met in optimize_unbalanced
         ])
-        self.non_optimized_unbalanced_idx = torch.LongTensor([
+        self.non_optimized_unbalanced_idx = jnp.array([
             i for i, met in enumerate(unb_mics) if met not in optimize_unbalanced
         ])
-        self.unb_conc_loc = torch.FloatTensor(
+        self.unb_conc_loc = jnp.array(
             pd.DataFrame(
                 unb_conc.location, index=unb_conc.ids[0], columns=unb_conc.ids[1]
             )
             .loc[self.experiments, unb_mics]
             .values
         )
-        self.unb_conc_scale = torch.FloatTensor(
+        self.unb_conc_scale = jnp.array(
             pd.DataFrame(unb_conc.scale, index=unb_conc.ids[0], columns=unb_conc.ids[1])
             .loc[self.experiments, unb_mics]
             .values
@@ -173,14 +177,14 @@ class Maudy(nn.Module):
         for exp in self.maud_params.experiments:
             for meas in exp.initial_state:
                 conc_inits[(exp.id, meas.target_id)] = (meas.value, 1.0)
-        self.bal_conc_mu = torch.FloatTensor([
+        self.bal_conc_mu = jnp.array([
             [
                 conc_inits[(exp, mic)][0] if (exp, mic) in conc_inits else 1e-6
                 for mic in bal_mics
             ]
             for exp in self.experiments
         ])
-        self.bal_conc_scale = torch.FloatTensor([
+        self.bal_conc_scale = jnp.array([
             [
                 conc_inits[(exp, mic)][1] if (exp, mic) in conc_inits else 1.0
                 for mic in bal_mics
@@ -189,69 +193,69 @@ class Maudy(nn.Module):
         ])
         self.bal_conc_loc = get_loc_from_mu_scale(self.bal_conc_mu, self.bal_conc_scale)
         S = self.kinetic_model.stoichiometric_matrix.loc[mics, edge_ids]
-        self.S = torch.FloatTensor(S.values)
+        self.S = jnp.array(S.values)
         # S matrix only for stoichoimetric reactions (to calculate saturation and drG)
-        self.S_enz = torch.FloatTensor(S.loc[:, ~S.columns.isin(drain.ids[1])].values)
+        self.S_enz = jnp.array(S.loc[:, ~S.columns.isin(drain.ids[1])].values)
         # S matrix used for thermo drG prime (reverisibility term), same as the one
         # for enzymatic reactions but it may be modified later if ferredoxin is present
-        self.S_enz_thermo = torch.FloatTensor(
+        self.S_enz_thermo = jnp.array(
             S.loc[:, ~S.columns.isin(drain.ids[1])].values
         )
         mic_enz = S.loc[:, ~S.columns.isin(drain.ids[1])].index
-        self.met_to_mic = torch.LongTensor([
+        self.met_to_mic = jnp.array([
             mets.index(mic.split("_", 1)[0]) for mic in mic_enz
-        ])
+        ], dtype=int)
         water_and_trans = {
             reac.id: (reac.water_stoichiometry, reac.transported_charge)
             for reac in self.kinetic_model.reactions
         }
-        self.water_stoichiometry = torch.FloatTensor([
+        self.water_stoichiometry = jnp.array([
             water_and_trans[r][0] for r in enzymatic_reactions
         ])
-        self.transported_charge = torch.FloatTensor([
+        self.transported_charge = jnp.array([
             water_and_trans[r][1] for r in enzymatic_reactions
         ])
         # 5. saturation, we need kms and indices
         reac_st = {reac.id: reac.stoichiometry for reac in self.kinetic_model.reactions}
         self.sub_conc_idx = [
-            torch.LongTensor([
+            jnp.array([
                 mics.index(met) for met, st in reac_st[reac].items() if st < 0
-            ])
+            ], dtype=int)
             for reac in enzymatic_reactions
         ]
         self.prod_conc_idx = [
-            torch.LongTensor([
+            jnp.array([
                 mics.index(met) for met, st in reac_st[reac].items() if st > 0
-            ])
+            ], dtype=int)
             for reac in enzymatic_reactions
         ]
         self.substrate_S = [
-            torch.LongTensor([-st for _, st in reac_st[reac].items() if st < 0])
+            jnp.array([-st for _, st in reac_st[reac].items() if st < 0], dtype=int)
             for reac in enzymatic_reactions
         ]
         self.product_S = [
-            torch.LongTensor([st for _, st in reac_st[reac].items() if st > 0])
+            jnp.array([st for _, st in reac_st[reac].items() if st > 0], dtype=int)
             for reac in enzymatic_reactions
         ]
         # the same but for drains
         self.sub_conc_drain_idx = [
-            torch.LongTensor([
+            jnp.array([
                 mics.index(met) for met, st in reac_st[reac].items() if st < 0
-            ])
+            ], dtype=int)
             for reac in drain.ids[1]
         ]
         self.prod_conc_drain_idx = [
-            torch.LongTensor([
+            jnp.array([
                 mics.index(met) for met, st in reac_st[reac].items() if st > 0
-            ])
+            ], dtype=int)
             for reac in drain.ids[1]
         ]
         self.substrate_drain_S = [
-            torch.LongTensor([-st for _, st in reac_st[reac].items() if st < 0])
+            jnp.array([-st for _, st in reac_st[reac].items() if st < 0], dtype=int)
             for reac in drain.ids[1]
         ]
         self.product_drain_S = [
-            torch.LongTensor([st for _, st in reac_st[reac].items() if st > 0])
+            jnp.array([st for _, st in reac_st[reac].items() if st > 0], dtype=int)
             for reac in drain.ids[1]
         ]
         # the kms
@@ -260,21 +264,21 @@ class Maudy(nn.Module):
         for i, km_id in enumerate(kms.ids[0]):
             enzyme, mic = km_id.split("_", 1)
             km_map[(enzyme, mic)] = i
-        self.km_loc = torch.FloatTensor(kms.location)
-        self.km_scale = torch.FloatTensor(kms.scale)
+        self.km_loc = jnp.array(kms.location)
+        self.km_scale = jnp.array(kms.scale)
         self.sub_km_idx = [
-            torch.LongTensor([
+            jnp.array([
                 km_map[(enz, met)] for met, st in reac_st[reac].items() if st < 0
-            ])
+            ], dtype=int)
             for enz, reac in zip(enzymes, enzymatic_reactions)
         ]
         # if the enz, mic is not in km_map, it is a irreversible reaction
         self.prod_km_idx = [
-            torch.LongTensor([
+            jnp.array([
                 km_map[(enz, met)]
                 for met, st in reac_st[reac].items()
                 if st > 0 and (enz, met) in km_map
-            ])
+            ], dtype=int)
             for enz, reac in zip(enzymes, enzymatic_reactions)
         ]
         # verify that the indices are at least injective
@@ -285,10 +289,10 @@ class Maudy(nn.Module):
             conc_idx for reac_idx in self.prod_km_idx for conc_idx in reac_idx
         ]
         assert len(all_sub_idx) == len(
-            set(all_sub_idx)
+            jnp.unique(jnp.array(all_sub_idx))
         ), "The indexing on the Km values went wrong for the substrates"
         assert len(all_prod_idx) == len(
-            set(all_prod_idx)
+            jnp.unique(jnp.array(all_prod_idx))
         ), "The indexing on the Km values went wrong for the products"
         # competitive inhibition
         kis = self.maud_params.ki.prior
@@ -299,15 +303,15 @@ class Maudy(nn.Module):
             for i, ki_id in enumerate(kis.ids[0]):
                 enzyme, _, mic = ki_id.split("_", 2)
                 ki_map[enzyme].append((i, mics.index(mic)))
-            self.ki_loc = torch.FloatTensor(kis.location)
-            self.ki_scale = torch.FloatTensor(kis.scale)
+            self.ki_loc = jnp.array(kis.location)
+            self.ki_scale = jnp.array(kis.scale)
             self.ki_idx = [
-                torch.LongTensor([i_ki for i_ki, _ in ki_map[enz]]) for enz in enzymes
+                jnp.array([i_ki for i_ki, _ in ki_map[enz]], dtype=int) for enz in enzymes
             ]
             self.ki_conc_idx = [
-                torch.LongTensor(
+                jnp.array(
                     [i_conc for _, i_conc in ki_map[enz]] if enz in ki_map else []
-                )
+                , dtype=int)
                 for enz in enzymes
             ]
         # allostery
@@ -324,20 +328,20 @@ class Maudy(nn.Module):
                     mics.index(f"{met}_{comp}"),
                     atype,
                 )
-            self.dc_loc = torch.FloatTensor(dc.location)
-            self.dc_scale = torch.FloatTensor(dc.scale)
-            self.tc_loc = torch.FloatTensor(tc.location)
-            self.tc_scale = torch.FloatTensor(tc.scale)
-            self.allostery_idx = torch.LongTensor([
+            self.dc_loc = jnp.array(dc.location)
+            self.dc_scale = jnp.array(dc.scale)
+            self.tc_loc = jnp.array(tc.location)
+            self.tc_scale = jnp.array(tc.scale)
+            self.allostery_idx = jnp.array([
                 dc_map[enz][0] for enz in enzymes if enz in dc_map
-            ])
-            self.conc_allostery_idx = torch.LongTensor([
+            ], dtype=int)
+            self.conc_allostery_idx = jnp.array([
                 dc_map[enz][1] for enz in enzymes if enz in dc_map
-            ])
-            self.allostery_activation = torch.BoolTensor([
+            ], dtype=int)
+            self.allostery_activation = jnp.array([
                 dc_map[enz][2] == "activation" for enz in enzymes if enz in dc_map
-            ])
-            self.subunits = torch.IntTensor([
+            ], dtype=int)
+            self.subunits = jnp.array([
                 next(
                     kin_enz.subunits
                     for kin_enz in self.kinetic_model.enzymes
@@ -345,9 +349,9 @@ class Maudy(nn.Module):
                 )
                 for enz in enzymes
                 if enz in dc_map
-            ])
+            ], dtype=int)
 
-        self.obs_fluxes = torch.FloatTensor([
+        self.obs_fluxes = jnp.array([
             [
                 meas.value
                 for meas in exp.measurements
@@ -355,7 +359,7 @@ class Maudy(nn.Module):
             ]
             for exp in self.maud_params.experiments
         ])
-        self.obs_fluxes_std = torch.FloatTensor([
+        self.obs_fluxes_std = jnp.array([
             [
                 meas.error_scale
                 for meas in exp.measurements
@@ -363,37 +367,37 @@ class Maudy(nn.Module):
             ]
             for exp in self.maud_params.experiments
         ])
-        self.obs_conc = torch.FloatTensor([
+        self.obs_conc = jnp.array([
             [
                 conc_obs[(e, mic)][0] if (e, mic) in conc_obs else float("nan")
                 for mic in mics
             ]
             for e in self.experiments
         ])
-        self.obs_conc_std = torch.FloatTensor([
+        self.obs_conc_std = jnp.array([
             [
                 conc_obs[(e, mic)][1] if (e, mic) in conc_obs else float("nan")
                 for mic in mics
             ]
             for e in self.experiments
         ])
-        idx = torch.LongTensor([
+        idx = jnp.array([
             [
                 enzymatic_reactions.index(meas.reaction)
                 for meas in exp.measurements
                 if meas.target_type == MeasurementType.FLUX
             ]
             for exp in self.maud_params.experiments
-        ])
+        ], dtype=int)
         self.num_obs_fluxes = len(idx[0])
         self.obs_fluxes_idx = (
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
-        self.obs_conc_mask = ~torch.isnan(self.obs_conc_std)
+        self.obs_conc_mask = ~jnp.isnan(self.obs_conc_std)
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
-        self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
+        self.fdx_stoichiometry = jnp.zeros_like(self.water_stoichiometry)
         fdx = maud_input._maudy_config.ferredoxin
         if fdx is not None:
             # first check if all reactions have a correct identifier to catch user typos
@@ -401,12 +405,12 @@ class Maudy(nn.Module):
             assert (
                 len(fdx_not_reac) == 0
             ), f"{fdx_not_reac} with ferredoxin not in {enzymatic_reactions}"
-            self.fdx_stoichiometry = torch.FloatTensor([
+            self.fdx_stoichiometry = jnp.array([
                 fdx[r] if r in fdx else 0 for r in enzymatic_reactions
             ])
             # add row for S matrix to calculate DrG prime
-            self.S_enz_thermo = torch.cat(
-                [self.S_enz_thermo, self.fdx_stoichiometry.unsqueeze(0)], dim=0
+            self.S_enz_thermo = jnp.concat(
+                [self.S_enz_thermo, jnp.expand_dims(self.fdx_stoichiometry, axis=0)], axis=0
             )
         self.enzymatic_reactions = enzymatic_reactions
         self.has_fdx = any(st != 0 for st in self.fdx_stoichiometry)
@@ -414,18 +418,18 @@ class Maudy(nn.Module):
         # Setup the various neural networks
         # when there are very small values, we need to normalize the conc so that
         # it does not explode
-        all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
+        all_concs = jnp.concat((jnp.log(self.obs_conc[self.obs_conc_mask]), self.unb_conc_loc.flatten()))
         min_max = (all_concs.min().item() - 0.6, all_concs.max().item() + 0.6) if normalize else None
         self.init_latent = all_concs.mean().item()
         self.normalize = normalize
-        self.decoder = BaseDecoder(
+        self.decoder_args = dict(
             met_dim=len(self.balanced_mics_idx),
             unb_dim=self.unb_conc_loc.shape[1],
             enz_dim=len(enzymatic_reactions),
             drain_dim=self.drain_mean.shape[1],
             normalize=min_max,
         )
-        nn_encoder = BaseConcCoder(
+        self.encoder_args = dict(
             met_dims=[len(self.non_optimized_unbalanced_idx)]
             + nn_config.met_dims
             + [len(self.balanced_mics_idx)],
@@ -433,7 +437,7 @@ class Maudy(nn.Module):
             km_dims=[len(self.km_loc)]
             + nn_config.km_dims
             + [len(self.balanced_mics_idx)],
-            drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
+            drain_dim=self.drain_mean.shape[1] if self.drain_mean.size != 0 else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
             # batch norm and dropout won't work without a batch dim
@@ -441,49 +445,37 @@ class Maudy(nn.Module):
             batchnorm=len(self.experiments) > 1,
             normalize=min_max,
         )
-        if self.has_fdx:
-            fdx_head(nn_encoder)
-        self.has_opt_unb = self.optimized_unbalanced_idx.numel() != 0
-        if self.has_opt_unb:
-            unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
-        self.concoder = nn_encoder
-
-    def cuda(self):
-        super().cuda()
-        for key in self.__dict__.keys():
-            if isinstance(self.__dict__[key], torch.Tensor):
-                self.__dict__[key] = self.__dict__[key].cuda()
-            if isinstance(self.__dict__[key], list):
-                self.__dict__[key] = [
-                    x.cuda() if isinstance(x, torch.Tensor) else x
-                    for x in self.__dict__[key]
-                ]
+        # if self.has_fdx:
+        #     fdx_head(nn_encoder)
+        # self.has_opt_unb = self.optimized_unbalanced_idx.size != 0
+        # if self.has_opt_unb:
+        #     unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
+        # self.concoder = nn_encoder
 
     def model(
         self,
-        obs_flux: Optional[torch.FloatTensor] = None,
-        obs_conc: Optional[torch.FloatTensor] = None,
+        obs_flux: Optional[jnp.ndarray] = None,
+        obs_conc: Optional[jnp.ndarray] = None,
         penalize_ss: bool = True,
         annealing_factor: float = 1.0,
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
-        pyro.module("maudy", self)
 
         # experiment-indepedent variables
-        kcat = pyro.sample(
+        kcat = numpyro.sample(
             "kcat", dist.LogNormal(self.kcat_loc, self.kcat_scale).to_event(1)
         )
-        dgf = pyro.sample(
+        dgf = numpyro.sample(
             "dgf", dist.MultivariateNormal(self.dgf_means, scale_tril=self.dgf_cov)
         )
         dgf = dgf.reshape(-1)
         fdx_contr = (
-            pyro.sample("fdx_contr", dist.Normal(77, 1))
+            numpyro.sample("fdx_contr", dist.Normal(77, 1))
             if self.has_fdx
-            else self.float_tensor([0.0])
+            else jnp.array([0.0])
         )
-        dgr = pyro.deterministic(
+        dgr = numpyro.deterministic(
             "dgr",
             get_dgr(
                 self.S_enz,
@@ -493,69 +485,69 @@ class Maudy(nn.Module):
                 fdx_contr,
             ),
         )
-        km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
-        rest = self.float_tensor([])
+        km = numpyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
+        rest = jnp.array([])
         if self.has_ci:
-            ki = pyro.sample(
+            ki = numpyro.sample(
                 "ki", dist.LogNormal(self.ki_loc, self.ki_scale).to_event(1)
             )
             rest = ki
         if self.has_allostery:
-            dc = pyro.sample(
+            dc = numpyro.sample(
                 "dc", dist.LogNormal(self.dc_loc, self.dc_scale).to_event(1)
             )
-            tc = pyro.sample(
+            tc = numpyro.sample(
                 "tc", dist.LogNormal(self.tc_loc, self.tc_scale).to_event(1)
             )
-            rest = torch.cat([rest, tc, dc], dim=-1)
+            rest = jnp.concat([rest, tc, dc], axis=-1)
         # TODO: need to take this from the config (and done in th epalte)
-        psi = pyro.sample(
-            "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
+        psi = numpyro.sample(
+            "psi", dist.Normal(-0.110, 0.01)
         )
-        with pyro.plate("experiment", size=len(self.experiments)):
-            enzyme_conc = pyro.sample(
+        with numpyro.plate("experiment", size=len(self.experiments)):
+            enzyme_conc = numpyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(self.enzyme_concs_loc, self.enzyme_concs_scale).to_event(
                     1
                 ),
             )
             kcat_drain = (
-                pyro.sample(
+                numpyro.sample(
                     "kcat_drain",
                     dist.Normal(self.drain_mean, self.drain_std).to_event(1),
                 )
                 if self.drain_mean.shape[1]
-                else self.float_tensor([])
+                else jnp.array([])
             )
-            with pyro.poutine.scale(scale=annealing_factor):
-                unb_conc = pyro.sample(
-                    "unb_conc",
-                    dist.LogNormal(
-                        self.unb_conc_loc,
-                        self.unb_conc_scale,
-                    ).to_event(1),
-                )
-                latent_bal_conc = pyro.sample(
-                    "latent_bal_conc",
-                    dist.LogNormal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
-                        1
-                    ),
-                )
-            ln_bal_conc = pyro.deterministic(
-                "ln_bal_conc",
-                self.decoder(latent_bal_conc, unb_conc, enzyme_conc, kcat_drain),
-                event_dim=1,
+            unb_conc = numpyro.sample(
+                "unb_conc",
+                dist.LogNormal(
+                    self.unb_conc_loc,
+                    self.unb_conc_scale,
+                ).to_event(1),
             )
-            conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = ln_bal_conc.exp()
-            conc[:, self.unbalanced_mics_idx] = unb_conc
+            latent_bal_conc = numpyro.sample(
+                "latent_bal_conc",
+                dist.LogNormal(jnp.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
+                    1
+                ),
+            )
+            encoder = flax_module(
+                "encoder",
+                BaseDecoder(**self.decoder_args),
+                jnp.zeros_like(latent_bal_conc), jnp.ones_like(unb_conc), jnp.ones_like(enzyme_conc), jnp.ones_like(kcat_drain)
+            )
+            ln_bal_conc = numpyro.deterministic("ln_bal_conc", encoder(latent_bal_conc, unb_conc, enzyme_conc, kcat_drain))
+            conc = jnp.ones((len(self.experiments), self.num_mics))
+            conc = conc.at[:, self.balanced_mics_idx].set(jnp.exp(ln_bal_conc))
+            conc = conc.at[:, self.unbalanced_mics_idx].set(unb_conc)
             conc_comp = conc
-            if self.has_fdx:
-                fdx_ratio = pyro.sample(
-                    "fdx_ratio",
-                    dist.LogNormal(self.float_tensor([0.0]), 0.1).to_event(1),
-                )
-                conc = torch.cat([conc, fdx_ratio], dim=1)
+            # if self.has_fdx:
+            #     fdx_ratio = numpyro.sample(
+            #         "fdx_ratio",
+            #         dist.LogNormal(0.0, 0.1).to_event(1),
+            #     )
+            #     conc = jnp.concat([conc, fdx_ratio], axis=1)
             # log balanced concentrations
             free_enz_km_denom = get_free_enzyme_ratio_denom(
                 conc,
@@ -568,7 +560,7 @@ class Maudy(nn.Module):
                 self.product_S,
             )
             free_enz_ki_denom = (
-                pyro.deterministic(
+                numpyro.deterministic(
                     "ci",
                     get_competitive_inhibition_denom(
                         conc,
@@ -576,33 +568,29 @@ class Maudy(nn.Module):
                         self.ki_conc_idx,
                         self.ki_idx,
                     ),
-                    event_dim=1,
                 )
                 if self.has_ci
                 else 0
             )
-            free_enzyme_ratio = pyro.deterministic(
+            free_enzyme_ratio = numpyro.deterministic(
                 "free_enzyme_ratio",
                 1 / (free_enz_km_denom + free_enz_ki_denom),
-                event_dim=1,
             )
-            vmax = pyro.deterministic("vmax", get_vmax(kcat, enzyme_conc), event_dim=1)
-            rev = pyro.deterministic(
+            vmax = numpyro.deterministic("vmax", get_vmax(kcat, enzyme_conc))
+            rev = numpyro.deterministic(
                 "rev",
                 get_reversibility(
                     self.S_enz_thermo, dgr, conc, self.transported_charge, psi
                 ),
-                event_dim=1,
             )
-            sat = pyro.deterministic(
+            sat = numpyro.deterministic(
                 "sat",
                 get_saturation(
                     conc, km, free_enzyme_ratio, self.sub_conc_idx, self.sub_km_idx
                 ),
-                event_dim=1,
             )
             allostery = (
-                pyro.deterministic(
+                numpyro.deterministic(
                     "allostery",
                     get_allostery(
                         conc,
@@ -614,23 +602,22 @@ class Maudy(nn.Module):
                         self.conc_allostery_idx,
                         self.subunits,
                     ),
-                    event_dim=1,
                 )
                 if self.has_allostery
-                else torch.ones_like(vmax)
+                else jnp.ones_like(vmax)
             )
-            flux = pyro.deterministic(
-                "flux", vmax * rev * sat * allostery, event_dim=1
+            flux = numpyro.deterministic(
+                "flux", vmax * rev * sat * allostery
             ).reshape(len(self.experiments), len(self.sub_km_idx))
             true_obs_flux = flux[self.obs_fluxes_idx]
             # Ensure true_obs_flux has shape [num_experiments, num_obs_fluxes]
             true_obs_flux = true_obs_flux.reshape(len(self.experiments), -1)
-            if true_obs_flux.ndim == 1:
-                true_obs_flux = true_obs_flux.unsqueeze(-1)
+            # if true_obs_flux.ndim == 1:
+            #     true_obs_flux = true_obs_flux.unsqueeze(-1)
 
             # TODO: small drain correction from config
             drain = (
-                pyro.deterministic(
+                numpyro.deterministic(
                     "drain",
                     get_kinetic_multi_drain(
                         kcat_drain,
@@ -641,72 +628,67 @@ class Maudy(nn.Module):
                         self.product_drain_S,
                         1e-9,
                     ),
-                    event_dim=1,
                 )
-                if kcat_drain.size()[0]
+                if kcat_drain.size != 0
                 else None
             )
-            all_flux = torch.cat([drain, flux], dim=1) if drain is not None else flux
-            ssd = pyro.deterministic(
-                "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx], event_dim=1
+            all_flux = jnp.concat([drain, flux], axis=1) if drain is not None else flux
+            ssd = numpyro.deterministic(
+                "ssd", all_flux @ self.S.T[:, self.balanced_mics_idx]
             )
-            pyro.sample(
+            numpyro.sample(
                 "y_flux_train",
                 dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
-            pyro.sample(
+            numpyro.sample(
                 "y_conc_train",
                 dist.LogNormal(
-                    conc_comp.log()[self.obs_conc_mask],
+                    jnp.log(conc_comp)[self.obs_conc_mask],
                     self.obs_conc_std[self.obs_conc_mask] / annealing_factor,
                 ).to_event(1),
                 obs=obs_conc[self.obs_conc_mask] if obs_conc is not None else None,
             )
-            if penalize_ss:
-                ssd_factor = pyro.deterministic(
-                    "ssd_factor",
-                    ssd.abs() / (ln_bal_conc.exp() + 1e-13),
-                    event_dim=1,
-                )
-                pyro.factor(
-                    "steady_state_dev",
-                    -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
-                )
-
-    def float_tensor(self, x) -> torch.Tensor:
-        return torch.tensor(x, device=self.water_stoichiometry.device)
+            ssd_factor = numpyro.deterministic(
+                "ssd_factor",
+                0.5 * (jnp.log(jnp.abs(ssd) + 1e-14) - ln_bal_conc).clip(-6.90775, 6.90775).sum(axis=-1),
+            )
+            ssd_factor = lax.select(penalize_ss, ssd_factor, jnp.zeros_like(ssd_factor))
+            numpyro.factor(
+                "steady_state_dev",
+                 -ssd_factor,
+            )
 
     # The guide specifies the variational distribution
     def guide(
         self,
-        obs_flux: Optional[torch.FloatTensor] = None,
-        obs_conc: Optional[torch.FloatTensor] = None,
+        obs_flux: Optional[jnp.ndarray] = None,
+        obs_conc: Optional[jnp.ndarray] = None,
         penalize_ss: bool = False,
         annealing_factor: float = 1.0,
     ):
         """Establish the variational distributions for SVI."""
-        pyro.module("maudy", self)
-        dgf_param_loc = pyro.param("dgf_loc", self.dgf_means)
-        dgf = pyro.sample(
+        dgf_param_loc = numpyro.param("dgf_loc", self.dgf_means)
+        dgf = numpyro.sample(
             "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
-        fdx_contr_loc = pyro.param("fdx_contr_loc", self.float_tensor([77.0]))
-        fdx_contr_scale = pyro.param(
-            "fdx_contr_scale", self.float_tensor([1.0]), constraint=Positive
+        fdx_contr_loc = numpyro.param("fdx_contr", jnp.array([77.0]))
+        fdx_contr_scale = numpyro.param(
+            "fdx_contr_scale", jnp.array([1.0]), constraint=Positive
         )
-        fdx_contr = (
-            pyro.sample("fdx_contr", dist.Normal(fdx_contr_loc, fdx_contr_scale))
-            if any(st != 0 for st in self.fdx_stoichiometry)
-            else self.float_tensor([0.0])
-        )
-        kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
-        kcat = pyro.sample(
+        # Perform both sampling operations
+        fdx_contr_sampled = numpyro.sample("fdx_contr_sampled", dist.Normal(fdx_contr_loc, fdx_contr_scale))
+        fdx_contr_default = jnp.array([0.0])
+
+        # Select the correct value based on the condition
+        fdx_contr = lax.select(self.has_fdx, fdx_contr_sampled, fdx_contr_default)
+        kcat_param_loc = numpyro.param("kcat_loc", self.kcat_loc)
+        kcat = numpyro.sample(
             "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
         )
-        km_loc = pyro.param("km_loc", self.km_loc)
-        km_scale = pyro.param("km_scale", self.km_scale, Positive)
-        km = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
+        km_loc = numpyro.param("km_loc", self.km_loc)
+        km_scale = numpyro.param("km_scale", self.km_scale, constraint=Positive)
+        km = numpyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
         dgr = get_dgr(
             self.S_enz,
             dgf[self.met_to_mic],
@@ -714,83 +696,81 @@ class Maudy(nn.Module):
             self.fdx_stoichiometry,
             fdx_contr,
         )
-        rest = self.float_tensor([])
+        rest = jnp.array([])
         if self.has_ci:
-            ki_loc = pyro.param("ki_loc", self.ki_loc)
-            ki_scale = pyro.param("ki_scale", self.ki_scale, Positive)
-            ki = pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
+            ki_loc = numpyro.param("ki_loc", self.ki_loc)
+            ki_scale = numpyro.param("ki_scale", self.ki_scale, constraint=Positive)
+            ki = numpyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
             rest = ki
         if self.has_allostery:
-            dc_loc = pyro.param("dc_loc", self.dc_loc)
-            dc_scale = pyro.param("dc_scale", self.dc_scale, Positive)
-            tc_loc = pyro.param("tc_loc", self.tc_loc)
-            tc_scale = pyro.param("tc_scale", self.tc_scale, Positive)
-            dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
-            tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
-            rest = torch.cat([rest, tc, dc])
+            dc_loc = numpyro.param("dc_loc", self.dc_loc)
+            dc_scale = numpyro.param("dc_scale", self.dc_scale, constraint=Positive)
+            tc_loc = numpyro.param("tc_loc", self.tc_loc)
+            tc_scale = numpyro.param("tc_scale", self.tc_scale, constraint=Positive)
+            dc = numpyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
+            tc = numpyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
+            rest = jnp.concat([rest, tc, dc])
 
-        psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))
-        pyro.sample(
-            "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
+        psi_mean = numpyro.param("psi_mean", jnp.array(-0.110))
+        numpyro.sample(
+            "psi", dist.Normal(psi_mean, jnp.array(0.01))
         )
-        with pyro.plate("experiment", size=len(self.experiments)):
-            enzyme_concs_param_loc = pyro.param(
+        with numpyro.plate("experiment", size=len(self.experiments)):
+            enzyme_concs_param_loc = numpyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
             )
-            enz_conc = pyro.sample(
+            enz_conc = numpyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(
                     enzyme_concs_param_loc, self.enzyme_concs_scale
                 ).to_event(1),
             )
-            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1)
-            drain_std = pyro.param(
-                "drain_std", lambda: self.drain_std, constraint=Positive, event_dim=1
+            drain_mean = numpyro.param("drain_mean", self.drain_mean, event_dim=1)
+            drain_std = numpyro.param(
+                "drain_std", self.drain_std, constraint=Positive, event_dim=1
             )
             kcat_drain = (
-                pyro.sample(
+                numpyro.sample(
                     "kcat_drain",
                     dist.Normal(drain_mean, drain_std).to_event(1),
                 )
                 if self.drain_mean.shape[1]
-                else self.float_tensor([])
+                else jnp.array([])
             )
-            unb_conc_param_loc = pyro.param(
+            unb_conc_param_loc = numpyro.param(
                 "unb_conc_param_loc",
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
+                self.unb_conc_loc,
                 event_dim=1,
             )
-            concoder_output = self.concoder(
-                unb_conc_param_loc, dgr, enz_conc, kcat, kcat_drain, km, rest
-            )
-            unb_conc_param_loc_full = torch.full_like(self.unb_conc_loc, 1.0)
-            unb_conc_param_loc_full[:, self.non_optimized_unbalanced_idx] = (
-                unb_conc_param_loc
+            concoder_net = flax_module(
+                "concoder",
+                BaseConcCoder(**self.encoder_args),
+                jnp.zeros_like(unb_conc_param_loc), jnp.zeros_like(dgr), jnp.ones_like(enz_conc), jnp.ones_like(kcat), jnp.ones_like(kcat_drain), jnp.ones_like(km), jnp.ones_like(km),
+                apply_rng=["dropout"],
             )
             # in reverse order that additional head outputs may have been added
-            if self.has_opt_unb:
-                unb_optimized = concoder_output.pop()
-                unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = (
-                    unb_optimized
-                )
-            if self.has_fdx:
-                fdx_ratio = concoder_output.pop()
-            latent_bal_conc_loc, bal_conc_scale = concoder_output
-            with pyro.poutine.scale(scale=annealing_factor):
-                pyro.sample(
-                    "unb_conc",
-                    dist.LogNormal(
-                        unb_conc_param_loc_full, self.unb_conc_scale
-                    ).to_event(1),
-                )
-                pyro.sample(
-                    "latent_bal_conc",
-                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
-                )
-            if self.has_fdx:
-                fdx_ratio = pyro.sample(
-                    "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
-                )
+            # if self.has_opt_unb:
+            #     unb_optimized = concoder_output.pop()
+            #     unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = (
+            #         unb_optimized
+            #     )
+            # if self.has_fdx:
+            #     fdx_ratio = concoder_output.pop()
+            latent_bal_conc_loc, bal_conc_scale = concoder_net(unb_conc_param_loc, dgr, enz_conc, kcat, kcat_drain, km, rest, rngs={"dropout": numpyro.prng_key()})
+            numpyro.sample(
+                "unb_conc",
+                dist.LogNormal(
+                    unb_conc_param_loc, self.unb_conc_scale
+                ).to_event(1),
+            )
+            numpyro.sample(
+                "latent_bal_conc",
+                dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
+            )
+            # if self.has_fdx:
+            #     fdx_ratio = numpyro.sample(
+            #         "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
+            #     )
 
     def print_inputs(self):
         print(
