@@ -21,7 +21,7 @@ class BaseConcCoder(nn.Module):
     def __init__(
         self,
         met_dims: list[int],
-        reac_dims: list[int],
+        reac_dim: int,
         km_dims: list[int],
         drain_dim: int = 0,
         ki_dim: int = 0,
@@ -35,9 +35,8 @@ class BaseConcCoder(nn.Module):
         # metabolites
         self.met_dims = met_dims
         # reactions
-        n_enz_reac = reac_dims[0]
-        reac_dims[0] += drain_dim
-        self.reac_backbone = nn.Linear(reac_dims[0], reac_dims[-1])
+        n_enz_reac = reac_dim
+        reac_dim += drain_dim
         # kms
         constant_dims = km_dims.copy()
         constant_dims[0] = constant_dims[0] + 2 * n_enz_reac + ki_dim + tc_dim * 2
@@ -48,7 +47,7 @@ class BaseConcCoder(nn.Module):
             ],
         )
         emb_dims = met_dims.copy()
-        emb_dims[0] = reac_dims[0] + met_dims[0] + obs_flux_dim
+        emb_dims[0] = reac_dim + met_dims[0] + obs_flux_dim
         self.emb_layer = nn.Sequential(
             *[
                 nn.Sequential(nn.Linear(in_dim, out_dim), nn.SiLU())

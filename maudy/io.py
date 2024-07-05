@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 class NeuralNetworkConfig(BaseModel):
     met_dims: list[int] = [256, 256, 256, 256]
-    reac_dims: list[int] = [256, 256, 256, 16]
     km_dims: list[int] = [256, 256, 16]
 
 

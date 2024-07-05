@@ -429,7 +429,7 @@ class Maudy(nn.Module):
             met_dims=[len(self.non_optimized_unbalanced_idx)]
             + nn_config.met_dims
             + [len(self.balanced_mics_idx)],
-            reac_dims=[len(enzymatic_reactions)] + nn_config.reac_dims,
+            reac_dim=len(enzymatic_reactions),
             km_dims=[len(self.km_loc)]
             + nn_config.km_dims
             + [len(self.balanced_mics_idx)],
