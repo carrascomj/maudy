@@ -30,6 +30,8 @@ cycler==0.12.1
     # via matplotlib
 depinfo==1.7.0
     # via maud-metabolic-models
+dill==0.3.8
+    # via maudy
 dm-tree==0.1.8
     # via arviz
 etils==1.9.2

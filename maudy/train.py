@@ -1,5 +1,8 @@
 """Training loop and CLI."""
 
+import dill as pickle
+import os
+import shutil
 from typer import Option
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +19,7 @@ from numpyro.infer.svi import SVIState
 
 from .io import load_maudy_config
 from .model import Maudy
+from .analysis import predict, print_summary_dfs, report_to_dfs
 
 
 def anneal(epoch, annealing_epochs, min_factor):
@@ -36,7 +40,14 @@ def train(
     eval_conc: bool,
     annealing_epochs: int,
     normalize: bool,
-):
+) -> tuple[Maudy, dict]:
+    """Train the model.
+    
+    Returns
+    -------
+    tuple[Maudy, dict]
+        the model object (contains model and guide) and the optimized params dictionary
+    """
 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input, normalize)
@@ -48,9 +59,10 @@ def train(
 
     lr_start = 3e-4
     lr_end = 8e-5
+    learning_rate_schedule = optax.linear_schedule(init_value=lr_start, end_value=lr_end, transition_steps=num_epochs)
     optimizer = optax.chain(
         optax.clip_by_global_norm(1.0),  # Clip gradients by global norm
-        optax.adam(lr_start, b1=(lr_end / lr_start) ** (1 / num_epochs))
+        optax.adam(learning_rate_schedule)
     )
     elbo = Trace_ELBO()
     svi = SVI(maudy.model, maudy.guide, optimizer, elbo)
@@ -70,7 +82,7 @@ def train(
         t = anneal(epoch, annealing_epochs, 0.2)
         state, loss = update_state(state, obs_flux=obs_flux, obs_conc=obs_conc, penalize_ss=penalize_ss, annealing_factor=t)
         progress_bar.set_postfix(loss=f"{loss:+.2e}", T=f"{t:.2f}")
-    return maudy, state
+    return maudy, svi.get_params(state)
 
 
 def get_timestamp():
@@ -91,18 +103,19 @@ def sample(
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
+    maudy, state = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
+    var_names = ["y_flux_train", "latent_bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc"]
+    samples = predict(maudy, state, 800, var_names)
+    gathered_samples = report_to_dfs(maudy, samples, var_names=var_names)
+    print_summary_dfs(gathered_samples)
     if smoke:
         return
-    # out = (
-    #     out_dir
-    #     if out_dir is not None
-    #     else Path(f"maudyout_{maud_input.config.name}_{get_timestamp()}")
-    # )
-    # os.mkdir(out)
-    # torch.save(
-    #     {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()},
-    #     out / "model.pt",
-    # )
-    # pyro.get_param_store().save(str(out / "model_params.pt"))
-    # shutil.copytree(maud_dir, out / "user_input")
+    out = (
+        out_dir
+        if out_dir is not None
+        else Path(f"maudyout_{maud_input.config.name}_{get_timestamp()}")
+    )
+    os.mkdir(out)
+    with open("maudy_result.pkl", "wb") as f:
+        pickle.dump((maudy, state), f)
+    shutil.copytree(maud_dir, out / "user_input")

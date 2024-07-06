@@ -672,12 +672,12 @@ class Maudy:
         dgf = numpyro.sample(
             "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
         )
-        fdx_contr_loc = numpyro.param("fdx_contr", jnp.array([77.0]))
+        fdx_contr_loc = numpyro.param("fdx_contr_loc", jnp.array([77.0]))
         fdx_contr_scale = numpyro.param(
             "fdx_contr_scale", jnp.array([1.0]), constraint=Positive
         )
         # Perform both sampling operations
-        fdx_contr_sampled = numpyro.sample("fdx_contr_sampled", dist.Normal(fdx_contr_loc, fdx_contr_scale))
+        fdx_contr_sampled = numpyro.sample("fdx_contr", dist.Normal(fdx_contr_loc, fdx_contr_scale))
         fdx_contr_default = jnp.array([0.0])
 
         # Select the correct value based on the condition

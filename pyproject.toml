@@ -13,6 +13,7 @@ dependencies = [
     "numpyro>=0.15.0",
     "jax>=0.4.30",
     "flax>=0.8.5",
+    "dill>=0.3.8",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

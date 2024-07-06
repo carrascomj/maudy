@@ -1,50 +1,44 @@
 """Analyse the output of a model."""
 
+import dill as pickle
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import pandas as pd
 import pyro
 import numpy as np
-import torch
+from jax import random
+import jax.numpy as jnp
 from maud.data_model.experiment import MeasurementType
 from maud.loading_maud_inputs import load_maud_input
 from pyro.optim import ClippedAdam
-from pyro.infer import Predictive, config_enumerate
+from numpyro.infer import Predictive
+from numpyro.infer.svi import SVIState
+
 
 from .model import Maudy
 from .io import load_maudy_config
 
 
 def load(model_output: Path):
-    user_input = model_output / "user_input"
-    maud_input = load_maud_input(str(user_input))
-    state_dict = torch.load(model_output / "model.pt", map_location="cpu")
-    maud_input._maudy_config = load_maudy_config(user_input)
-    # hack, if normalize was not applied, the decoder has a plain FF layer
-    # otherwise, a sequential where the first element is the layer
-    normalize = "decoder.loc_layer.0.bias" in state_dict["maudy"]
-    maudy = Maudy(maud_input, normalize)
-    maudy.load_state_dict(state_dict["maudy"])
-    pyro.get_param_store().load(str(model_output / "model_params.pt"), map_location="cpu")
-    optimizer = ClippedAdam({"lr": 0.006})
-    optimizer.set_state(state_dict["optimizer"])
-    return maudy, optimizer
+    with open(model_output / "maudy_result.pkl", "rb") as f:
+        maudy, params = pickle.load(f)
+    return maudy, params
 
 
 def summary(samples):
     site_stats = {}
     for k, v in samples.items():
         site_stats[k] = {
-            "mean": torch.mean(v, dim=0),
-            "std": torch.std(v, dim=0),
-            "5%": torch.quantile(v, 0.05, dim=0),
-            "95%": torch.quantile(v, 0.95, dim=0),
+            "mean": jnp.mean(v, axis=0),
+            "std": jnp.std(v, axis=0),
+            "5%": jnp.quantile(v, 0.05, axis=0),
+            "95%": jnp.quantile(v, 0.95, axis=0),
         }
     return site_stats
 
 
-def report_to_dfs(maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: list[str]):
+def report_to_dfs(maudy: Maudy, samples: dict[Any, jnp.ndarray], var_names: list[str]):
     pred_summary = summary(samples)
     balanced_mics = [met.id for met in maudy.kinetic_model.mics if met.balanced]
     unbalanced_mics = [met.id for met in maudy.kinetic_model.mics if not met.balanced]
@@ -76,7 +70,7 @@ def report_to_dfs(maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: lis
         for var_name in across_exps.keys():
             this_dict = {}
             for key, items in pred_summary[var_name].items():
-                this_dict[key] = items[i] if var_name != "dgr" else items.squeeze(0)
+                this_dict[key] = items[i]
             df = pd.DataFrame(
                 this_dict,
                 index=obs_fluxes
@@ -106,18 +100,28 @@ def report_to_dfs(maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: lis
 
 
 def predict(
-    maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]
-) -> dict[Any, torch.Tensor]:
+    maudy: Maudy, svi_state: dict, num_epochs: int, var_names: Sequence[str]
+) -> dict[Any, jnp.ndarray]:
     """Run posterior predictive check."""
-    maudy.concoder.set_dropout(0.0)
-    guide = config_enumerate(maudy.guide, "parallel", expand=True)
-    with torch.no_grad():
-        return Predictive(
-            maudy.model,
-            guide=guide,
-            num_samples=num_epochs,
-            return_sites=var_names,
-        )()
+    maudy.encoder_args["train"] = False
+    return Predictive(
+        maudy.model,
+        guide=maudy.guide,
+        params=svi_state,
+        num_samples=num_epochs,
+        return_sites=list(var_names),
+    )(rng_key=random.PRNGKey(23))
+
+
+def print_summary_dfs(gathered_samples: dict[str, pd.DataFrame]):
+    for var_name, df in gathered_samples.items():
+        print(f"### {var_name} ###")
+        if var_name == "dgr":
+            df = df.loc[df.experiment == df.experiment.iloc[0], :]
+            del df["experiment"]
+        if var_name.startswith("ln_"):
+            df.loc[:, ["mean", "5%", "95%"]] = np.exp(df[["mean", "5%", "95%"]])
+        print(df) 
 
 
 def ppc(model_output: Path, num_epochs: int = 800):
@@ -131,17 +135,7 @@ def ppc(model_output: Path, num_epochs: int = 800):
         "flux",
         "ln_bal_conc",
     )
-    maudy, _ = load(model_output)
-    samples = predict(maudy, num_epochs, var_names=var_names)
-    samples["ssd"] = samples["ssd"].squeeze(1)
-    if "flux" in samples:
-        samples["flux"] = samples["flux"].squeeze(1)
+    maudy, params = load(model_output)
+    samples = predict(maudy, params, num_epochs, var_names=var_names)
     gathered_samples = report_to_dfs(maudy, samples, var_names=list(var_names))
-    for var_name, df in gathered_samples.items():
-        print(f"### {var_name} ###")
-        if var_name == "dgr":
-            df = df.loc[df.experiment == df.experiment.iloc[0], :]
-            del df["experiment"]
-        if var_name.startswith("ln_"):
-            df.loc[:, ["mean", "5%", "95%"]] = np.exp(df[["mean", "5%", "95%"]])
-        print(df)
+    print_summary_dfs(gathered_samples)
