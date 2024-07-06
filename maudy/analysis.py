@@ -7,7 +7,7 @@ from typing import Any, Sequence
 import pandas as pd
 import pyro
 import numpy as np
-from jax import random
+from jax import jit, random
 import jax.numpy as jnp
 from maud.data_model.experiment import MeasurementType
 from maud.loading_maud_inputs import load_maud_input
@@ -104,13 +104,14 @@ def predict(
 ) -> dict[Any, jnp.ndarray]:
     """Run posterior predictive check."""
     maudy.encoder_args["train"] = False
-    return Predictive(
+    return jit(Predictive(
         maudy.model,
         guide=maudy.guide,
         params=svi_state,
         num_samples=num_epochs,
         return_sites=list(var_names),
-    )(rng_key=random.PRNGKey(23))
+        parallel=False,  # the memory usage may be huge for large models if True
+    ))(rng_key=random.PRNGKey(23))
 
 
 def print_summary_dfs(gathered_samples: dict[str, pd.DataFrame]):

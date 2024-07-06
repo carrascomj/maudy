@@ -23,7 +23,7 @@ from .kinetics import (
 )
 
 Positive = dist.constraints.positive
-numpyro.enable_x64(True)
+
 
 def get_loc_from_mu_scale(mu: jnp.ndarray, scale: jnp.ndarray) -> jnp.ndarray:
     mu2 = jnp.pow(mu, 2)
@@ -369,14 +369,14 @@ class Maudy:
         ])
         self.obs_conc = jnp.array([
             [
-                conc_obs[(e, mic)][0] if (e, mic) in conc_obs else float("nan")
+                conc_obs[(e, mic)][0] if (e, mic) in conc_obs else 248.0
                 for mic in mics
             ]
             for e in self.experiments
         ])
         self.obs_conc_std = jnp.array([
             [
-                conc_obs[(e, mic)][1] if (e, mic) in conc_obs else float("nan")
+                conc_obs[(e, mic)][1] if (e, mic) in conc_obs else 248.0
                 for mic in mics
             ]
             for e in self.experiments
@@ -394,7 +394,7 @@ class Maudy:
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
-        self.obs_conc_mask = ~jnp.isnan(self.obs_conc_std)
+        self.obs_conc_mask = self.obs_conc_std==248.0
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = jnp.zeros_like(self.water_stoichiometry)
@@ -444,13 +444,8 @@ class Maudy:
             drop_out=len(self.experiments) > 1,
             batchnorm=len(self.experiments) > 1,
             normalize=min_max,
+            has_fdx=self.has_fdx,
         )
-        # if self.has_fdx:
-        #     fdx_head(nn_encoder)
-        # self.has_opt_unb = self.optimized_unbalanced_idx.size != 0
-        # if self.has_opt_unb:
-        #     unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
-        # self.concoder = nn_encoder
 
     def model(
         self,
@@ -542,12 +537,12 @@ class Maudy:
             conc = conc.at[:, self.balanced_mics_idx].set(jnp.exp(ln_bal_conc))
             conc = conc.at[:, self.unbalanced_mics_idx].set(unb_conc)
             conc_comp = conc
-            # if self.has_fdx:
-            #     fdx_ratio = numpyro.sample(
-            #         "fdx_ratio",
-            #         dist.LogNormal(0.0, 0.1).to_event(1),
-            #     )
-            #     conc = jnp.concat([conc, fdx_ratio], axis=1)
+            if self.has_fdx:
+                fdx_ratio = numpyro.sample(
+                    "fdx_ratio",
+                    dist.LogNormal(jnp.zeros((len(self.experiments), 1)), 0.1).to_event(1),
+                )
+                conc = jnp.concat([conc, fdx_ratio], axis=1)
             # log balanced concentrations
             free_enz_km_denom = get_free_enzyme_ratio_denom(
                 conc,
@@ -669,8 +664,9 @@ class Maudy:
     ):
         """Establish the variational distributions for SVI."""
         dgf_param_loc = numpyro.param("dgf_loc", self.dgf_means)
+        scale_tril = numpyro.param("dgf_scale_tril", self.dgf_cov, constraint=dist.constraints.lower_cholesky)
         dgf = numpyro.sample(
-            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
+            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=scale_tril)
         )
         fdx_contr_loc = numpyro.param("fdx_contr_loc", jnp.array([77.0]))
         fdx_contr_scale = numpyro.param(
@@ -742,35 +738,29 @@ class Maudy:
                 self.unb_conc_loc,
                 event_dim=1,
             )
-            concoder_net = flax_module(
-                "concoder",
-                BaseConcCoder(**self.encoder_args),
-                jnp.zeros_like(unb_conc_param_loc), jnp.zeros_like(dgr), jnp.ones_like(enz_conc), jnp.ones_like(kcat), jnp.ones_like(kcat_drain), jnp.ones_like(km), jnp.ones_like(km),
-                apply_rng=["dropout"],
-            )
-            # in reverse order that additional head outputs may have been added
-            # if self.has_opt_unb:
-            #     unb_optimized = concoder_output.pop()
-            #     unb_conc_param_loc_full[:, self.optimized_unbalanced_idx] = (
-            #         unb_optimized
-            #     )
-            # if self.has_fdx:
-            #     fdx_ratio = concoder_output.pop()
-            latent_bal_conc_loc, bal_conc_scale = concoder_net(unb_conc_param_loc, dgr, enz_conc, kcat, kcat_drain, km, rest, rngs={"dropout": numpyro.prng_key()})
-            numpyro.sample(
+            unb_conc = numpyro.sample(
                 "unb_conc",
                 dist.LogNormal(
                     unb_conc_param_loc, self.unb_conc_scale
                 ).to_event(1),
             )
+            concoder_net = flax_module(
+                "concoder",
+                BaseConcCoder(**self.encoder_args),
+                jnp.ones_like(unb_conc_param_loc), jnp.zeros_like(dgr), jnp.ones_like(enz_conc), jnp.ones_like(kcat), jnp.ones_like(kcat_drain), jnp.ones_like(km), jnp.ones_like(rest),
+                apply_rng=["dropout"],
+            )
+            out, _batch_stats = concoder_net(unb_conc, dgr, enz_conc, kcat, kcat_drain, km, rest, rngs={"dropout": numpyro.prng_key()}, mutable=['batch_stats'])
+            latent_bal_conc_loc, bal_conc_scale, fdx_rate = out
+
             numpyro.sample(
                 "latent_bal_conc",
                 dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
             )
-            # if self.has_fdx:
-            #     fdx_ratio = numpyro.sample(
-            #         "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
-            #     )
+            if self.has_fdx:
+                numpyro.sample(
+                    "fdx_ratio", dist.LogNormal(fdx_rate, 0.1).to_event(1)
+                )
 
     def print_inputs(self):
         print(

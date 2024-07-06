@@ -14,6 +14,7 @@ from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
 import optax
 
+import numpyro
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.infer.svi import SVIState
 
@@ -101,21 +102,22 @@ def sample(
     smoke: bool = False,
 ):
     """Sample model."""
+    numpyro.enable_x64(True)
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
     maudy, state = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
+    if smoke:
+        return
     var_names = ["y_flux_train", "latent_bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc"]
     samples = predict(maudy, state, 800, var_names)
     gathered_samples = report_to_dfs(maudy, samples, var_names=var_names)
     print_summary_dfs(gathered_samples)
-    if smoke:
-        return
     out = (
         out_dir
         if out_dir is not None
         else Path(f"maudyout_{maud_input.config.name}_{get_timestamp()}")
     )
     os.mkdir(out)
-    with open("maudy_result.pkl", "wb") as f:
+    with open(out / "maudy_result.pkl", "wb") as f:
         pickle.dump((maudy, state), f)
     shutil.copytree(maud_dir, out / "user_input")
