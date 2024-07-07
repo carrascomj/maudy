@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import pandas as pd
-import pyro
+import numpyro
 import numpy as np
 from jax import jit, random
 import jax.numpy as jnp
@@ -100,19 +100,19 @@ def report_to_dfs(maudy: Maudy, samples: dict[Any, jnp.ndarray], var_names: list
 
 
 def predict(
-    maudy: Maudy, svi_state: dict, num_epochs: int, var_names: Sequence[str]
+    maudy: Maudy, svi_state: dict, num_samples: int, var_names: Sequence[str]
 ) -> dict[Any, jnp.ndarray]:
     """Run posterior predictive check."""
     maudy.encoder_args["train"] = False
-    return jit(Predictive(
+    predictive = Predictive(
         maudy.model,
         guide=maudy.guide,
         params=svi_state,
-        num_samples=num_epochs,
+        num_samples=num_samples,
         return_sites=list(var_names),
         parallel=False,  # the memory usage may be huge for large models if True
-    ))(rng_key=random.PRNGKey(23))
-
+    )
+    return jit(predictive)(rng_key=random.PRNGKey(23))
 
 def print_summary_dfs(gathered_samples: dict[str, pd.DataFrame]):
     for var_name, df in gathered_samples.items():
@@ -127,6 +127,7 @@ def print_summary_dfs(gathered_samples: dict[str, pd.DataFrame]):
 
 def ppc(model_output: Path, num_epochs: int = 800):
     """Run posterior predictive check and report it."""
+    numpyro.enable_x64(True)
     var_names = (
         "y_flux_train",
         "latent_bal_conc",
@@ -134,7 +135,7 @@ def ppc(model_output: Path, num_epochs: int = 800):
         "ssd",
         "dgr",
         "flux",
-        "ln_bal_conc",
+        "bal_conc",
     )
     maudy, params = load(model_output)
     samples = predict(maudy, params, num_epochs, var_names=var_names)

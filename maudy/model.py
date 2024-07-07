@@ -1,3 +1,4 @@
+import functools
 from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
@@ -6,12 +7,17 @@ import pandas as pd
 import numpyro
 import numpyro.distributions as dist
 from numpyro.contrib.module import flax_module
+import jax
+from numpyro.handlers import scale
+
+from jax.experimental.ode import odeint
 from jax import numpy as jnp
 from jax import lax
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import BaseConcCoder, BaseDecoder
+from .black_box import BaseConcCoder
 from .kinetics import (
+    dc_dt,
     get_allostery,
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -20,6 +26,7 @@ from .kinetics import (
     get_reversibility,
     get_saturation,
     get_vmax,
+    pack_theta,
 )
 
 Positive = dist.constraints.positive
@@ -369,14 +376,14 @@ class Maudy:
         ])
         self.obs_conc = jnp.array([
             [
-                conc_obs[(e, mic)][0] if (e, mic) in conc_obs else 248.0
+                conc_obs[(e, mic)][0] if (e, mic) in conc_obs else -1
                 for mic in mics
             ]
             for e in self.experiments
         ])
         self.obs_conc_std = jnp.array([
             [
-                conc_obs[(e, mic)][1] if (e, mic) in conc_obs else 248.0
+                conc_obs[(e, mic)][1] if (e, mic) in conc_obs else -1
                 for mic in mics
             ]
             for e in self.experiments
@@ -394,7 +401,7 @@ class Maudy:
             [i for i, exp in enumerate(idx) for _ in exp],
             [i for exp in idx for i in exp],
         )
-        self.obs_conc_mask = self.obs_conc_std==248.0
+        self.obs_conc_mask = self.obs_conc_std != -1
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = jnp.zeros_like(self.water_stoichiometry)
@@ -422,13 +429,13 @@ class Maudy:
         min_max = (all_concs.min().item() - 0.6, all_concs.max().item() + 0.6) if normalize else None
         self.init_latent = all_concs.mean().item()
         self.normalize = normalize
-        self.decoder_args = dict(
-            met_dim=len(self.balanced_mics_idx),
-            unb_dim=self.unb_conc_loc.shape[1],
-            enz_dim=len(enzymatic_reactions),
-            drain_dim=self.drain_mean.shape[1],
-            normalize=min_max,
-        )
+        # self.decoder_args = dict(
+        #     met_dim=len(self.balanced_mics_idx),
+        #     unb_dim=self.unb_conc_loc.shape[1],
+        #     enz_dim=len(enzymatic_reactions),
+        #     drain_dim=self.drain_mean.shape[1],
+        #     normalize=min_max,
+        # )
         self.encoder_args = dict(
             met_dims=[len(self.non_optimized_unbalanced_idx)]
             + nn_config.met_dims
@@ -499,7 +506,8 @@ class Maudy:
         psi = numpyro.sample(
             "psi", dist.Normal(-0.110, 0.01)
         )
-        with numpyro.plate("experiment", size=len(self.experiments)):
+        exp_plate = numpyro.plate("experiment", size=len(self.experiments))
+        with exp_plate:
             enzyme_conc = numpyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(self.enzyme_concs_loc, self.enzyme_concs_scale).to_event(
@@ -521,28 +529,42 @@ class Maudy:
                     self.unb_conc_scale,
                 ).to_event(1),
             )
-            latent_bal_conc = numpyro.sample(
-                "latent_bal_conc",
-                dist.LogNormal(jnp.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
-                    1
-                ),
-            )
-            encoder = flax_module(
-                "encoder",
-                BaseDecoder(**self.decoder_args),
-                jnp.zeros_like(latent_bal_conc), jnp.ones_like(unb_conc), jnp.ones_like(enzyme_conc), jnp.ones_like(kcat_drain)
-            )
-            ln_bal_conc = numpyro.deterministic("ln_bal_conc", encoder(latent_bal_conc, unb_conc, enzyme_conc, kcat_drain))
+            with scale(scale=annealing_factor):
+                latent_bal_conc = numpyro.sample(
+                    "latent_bal_conc",
+                    dist.LogNormal(jnp.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
+                        1
+                    ),
+                )
             conc = jnp.ones((len(self.experiments), self.num_mics))
-            conc = conc.at[:, self.balanced_mics_idx].set(jnp.exp(ln_bal_conc))
+            conc = conc.at[:, self.balanced_mics_idx].set(latent_bal_conc)
             conc = conc.at[:, self.unbalanced_mics_idx].set(unb_conc)
-            conc_comp = conc
             if self.has_fdx:
                 fdx_ratio = numpyro.sample(
                     "fdx_ratio",
                     dist.LogNormal(jnp.zeros((len(self.experiments), 1)), 0.1).to_event(1),
                 )
                 conc = jnp.concat([conc, fdx_ratio], axis=1)
+            # helpers to solve ODEs in a vectorized form
+            odeint_with_kwargs = functools.partial(odeint, rtol=1e-6, atol=1e-9, mxstep=1000)
+            vect_solve_ode = jax.vmap(
+                odeint_with_kwargs,
+                in_axes=(None, 0, None, 0, 0) if kcat_drain.size != 0 else (None, 0, None, 0),
+            )
+            theta = pack_theta(self, km, ki if self.has_ci else jnp.zeros(1), kcat, enzyme_conc, dgr, psi, tc if self.has_allostery else jnp.zeros(1), dc if self.has_allostery else jnp.zeros(1), kcat_drain, 1e-10)
+            theta, theta_shared = theta
+            dc_dt_partial = (functools.partial(dc_dt, theta_shared=theta_shared, drain=kcat_drain)
+                if kcat_drain.size == 0
+                else functools.partial(dc_dt, theta_shared=theta_shared)
+            )
+
+            t = jnp.array([10000.0])
+            conc = (vect_solve_ode(dc_dt_partial , conc, t, theta) if kcat_drain.size == 0
+                            else vect_solve_ode(dc_dt_partial , conc, t, theta[0], theta[1]))
+            # take the last step
+            conc = conc[:, -1, :]
+            numpyro.deterministic("bal_conc", conc[:, self.balanced_mics_idx])
+            conc_comp = conc if not self.has_fdx else conc[:, :-1]
             # log balanced concentrations
             free_enz_km_denom = get_free_enzyme_ratio_denom(
                 conc,
@@ -636,22 +658,23 @@ class Maudy:
                 dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
-            numpyro.sample(
-                "y_conc_train",
-                dist.LogNormal(
-                    jnp.log(conc_comp)[self.obs_conc_mask],
-                    self.obs_conc_std[self.obs_conc_mask] / annealing_factor,
-                ).to_event(1),
-                obs=obs_conc[self.obs_conc_mask] if obs_conc is not None else None,
-            )
             ssd_factor = numpyro.deterministic(
                 "ssd_factor",
-                0.5 * (jnp.log(jnp.abs(ssd) + 1e-14) - ln_bal_conc).clip(-6.90775, 6.90775).sum(axis=-1),
+                0.5 * (ssd**2).sum(axis=-1),
             )
             ssd_factor = lax.select(penalize_ss, ssd_factor, jnp.zeros_like(ssd_factor))
             numpyro.factor(
                 "steady_state_dev",
-                 -ssd_factor,
+                 -ssd_factor / annealing_factor,
+            )
+            mask = self.obs_conc_std != -1
+            numpyro.sample(
+                "y_conc_train",
+                dist.LogNormal(
+                    jnp.log(conc_comp),
+                    (self.obs_conc_std / annealing_factor),
+                ).mask(mask).to_event(1),
+                obs=obs_conc if obs_conc is not None else None,
             )
 
     # The guide specifies the variational distribution
@@ -753,10 +776,11 @@ class Maudy:
             out, _batch_stats = concoder_net(unb_conc, dgr, enz_conc, kcat, kcat_drain, km, rest, rngs={"dropout": numpyro.prng_key()}, mutable=['batch_stats'])
             latent_bal_conc_loc, bal_conc_scale, fdx_rate = out
 
-            numpyro.sample(
-                "latent_bal_conc",
-                dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
-            )
+            with scale(scale=annealing_factor):
+                numpyro.sample(
+                    "latent_bal_conc",
+                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
+                )
             if self.has_fdx:
                 numpyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_rate, 0.1).to_event(1)

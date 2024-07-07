@@ -58,11 +58,11 @@ class BaseConcCoder(nn.Module):
         scale = out
         for out_dim in self.met_dims[1:]:
             if self.batchnorm:
-                loc = nn.Sequential([nn.Dense(out_dim), norm, nn.relu, nn.Dropout(0.5, deterministic=not self.train)])(loc)
-                scale = nn.Sequential([nn.Dense(out_dim), norm, nn.relu, nn.Dropout(0.5, deterministic=not self.train)])(scale)
+                loc = nn.Sequential([nn.Dense(out_dim), norm, nn.relu, nn.Dropout(0, deterministic=not self.train)])(loc)
+                scale = nn.Sequential([nn.Dense(out_dim), norm, nn.relu, nn.Dropout(0, deterministic=not self.train)])(scale)
             else:
-                loc = nn.Sequential([nn.Dense(out_dim), nn.relu, nn.Dropout(0.5, deterministic=not self.train)])(loc)
-                scale = nn.Sequential([nn.Dense(out_dim), nn.relu, nn.Dropout(0.5, deterministic=not self.train)])(scale)
+                loc = nn.Sequential([nn.Dense(out_dim), nn.relu, nn.Dropout(0, deterministic=not self.train)])(loc)
+                scale = nn.Sequential([nn.Dense(out_dim), nn.relu, nn.Dropout(0, deterministic=not self.train)])(scale)
         if self.normalize is not None:
             loc = loc.clip(self.normalize[0], self.normalize[1])
         scale = nn.softplus(scale)

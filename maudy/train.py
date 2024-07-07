@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional
 
-from jax import jit, random
+from jax import jit, random, numpy as jnp
 from tqdm import tqdm
 from maud.loading_maud_inputs import load_maud_input
 from maud.data_model.maud_input import MaudInput
@@ -21,6 +21,23 @@ from numpyro.infer.svi import SVIState
 from .io import load_maudy_config
 from .model import Maudy
 from .analysis import predict, print_summary_dfs, report_to_dfs
+
+
+# Custom loss function
+class CustomTrace_ELBO(Trace_ELBO):
+    def loss(self, rng_key, param_map, model, guide, *args, **kwargs):
+        t = args[-1]  # Extract annealing factor from arguments
+        elbo_loss = super().loss(rng_key, param_map, model, guide, *args, **kwargs)
+        guide_trace = numpyro.handlers.trace(guide).get_trace(*args, **kwargs)
+        model_trace = numpyro.handlers.trace(numpyro.handlers.replay(model, guide_trace)).get_trace(*args, **kwargs)
+        
+        init_conc = guide_trace['latent_bal_conc']['value']
+        steady_state_conc = model_trace['bal_conc']['value']
+        
+        # Compute the additional loss term
+        # additional_loss = jnp.mean((init_conc - steady_state_conc)**2)
+        
+        return elbo_loss #+ additional_loss * t
 
 
 def anneal(epoch, annealing_epochs, min_factor):
@@ -67,7 +84,7 @@ def train(
     )
     elbo = Trace_ELBO()
     svi = SVI(maudy.model, maudy.guide, optimizer, elbo)
-    state = svi.init(rng_key=random.PRNGKey(23), obs_flux=obs_flux, obs_conc=obs_conc, penalize_ss=penalize_ss, annealing_factor=0.2)
+    state = svi.init(rng_key=random.PRNGKey(23), obs_flux=obs_flux, obs_conc=obs_conc, penalize_ss=penalize_ss, annealing_factor=0.1)
     state = SVIState(
         optim_state=state.optim_state,
         mutable_state=state.mutable_state,
@@ -80,7 +97,7 @@ def train(
 
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
     for epoch in progress_bar:
-        t = anneal(epoch, annealing_epochs, 0.2)
+        t = anneal(epoch, annealing_epochs, 0.1)
         state, loss = update_state(state, obs_flux=obs_flux, obs_conc=obs_conc, penalize_ss=penalize_ss, annealing_factor=t)
         progress_bar.set_postfix(loss=f"{loss:+.2e}", T=f"{t:.2f}")
     return maudy, svi.get_params(state)
@@ -108,7 +125,7 @@ def sample(
     maudy, state = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
     if smoke:
         return
-    var_names = ["y_flux_train", "latent_bal_conc", "unb_conc", "ssd", "dgr", "flux", "ln_bal_conc"]
+    var_names = ["y_flux_train", "latent_bal_conc", "unb_conc", "ssd", "dgr", "flux", "bal_conc"]
     samples = predict(maudy, state, 800, var_names)
     gathered_samples = report_to_dfs(maudy, samples, var_names=var_names)
     print_summary_dfs(gathered_samples)
