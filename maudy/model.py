@@ -512,7 +512,7 @@ class Maudy(nn.Module):
         psi = pyro.sample(
             "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
         )
-        with pyro.plate("experiment", size=len(self.experiments)):
+        with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(self.enzyme_concs_loc, self.enzyme_concs_scale).to_event(
@@ -527,14 +527,14 @@ class Maudy(nn.Module):
                 if self.drain_mean.shape[1]
                 else self.float_tensor([])
             )
+            unb_conc = pyro.sample(
+                "unb_conc",
+                dist.LogNormal(
+                    self.unb_conc_loc,
+                    self.unb_conc_scale,
+                ).to_event(1),
+            )
             with pyro.poutine.scale(scale=annealing_factor):
-                unb_conc = pyro.sample(
-                    "unb_conc",
-                    dist.LogNormal(
-                        self.unb_conc_loc,
-                        self.unb_conc_scale,
-                    ).to_event(1),
-                )
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
                     dist.LogNormal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
@@ -655,14 +655,6 @@ class Maudy(nn.Module):
                 dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
-            pyro.sample(
-                "y_conc_train",
-                dist.LogNormal(
-                    conc_comp.log()[self.obs_conc_mask],
-                    self.obs_conc_std[self.obs_conc_mask] / annealing_factor,
-                ).to_event(1),
-                obs=obs_conc[self.obs_conc_mask] if obs_conc is not None else None,
-            )
             if penalize_ss:
                 ssd_factor = pyro.deterministic(
                     "ssd_factor",
@@ -672,6 +664,17 @@ class Maudy(nn.Module):
                 pyro.factor(
                     "steady_state_dev",
                     -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
+                )
+            # each experiment, once selected by the mask, might have different
+            # dimensions, thus the loop
+            for i in idx:
+                pyro.sample(
+                    f"y_conc_train_{i}",
+                    dist.LogNormal(
+                        conc_comp[i].log()[self.obs_conc_mask[i]],
+                        self.obs_conc_std[i][self.obs_conc_mask[i]] / annealing_factor,
+                    ).to_event(1),
+                    obs=obs_conc[i][self.obs_conc_mask[i]] if obs_conc is not None else None,
                 )
 
     def float_tensor(self, x) -> torch.Tensor:
@@ -776,13 +779,13 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             latent_bal_conc_loc, bal_conc_scale = concoder_output
+            pyro.sample(
+                "unb_conc",
+                dist.LogNormal(
+                    unb_conc_param_loc_full, self.unb_conc_scale
+                ).to_event(1),
+            )
             with pyro.poutine.scale(scale=annealing_factor):
-                pyro.sample(
-                    "unb_conc",
-                    dist.LogNormal(
-                        unb_conc_param_loc_full, self.unb_conc_scale
-                    ).to_event(1),
-                )
                 pyro.sample(
                     "latent_bal_conc",
                     dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),

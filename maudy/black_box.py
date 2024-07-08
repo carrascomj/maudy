@@ -5,6 +5,11 @@ import torch
 import torch.nn as nn
 
 
+class Norm(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - x.mean(dim=-1).unsqueeze(1)) / torch.sqrt(x.var(dim=-1).unsqueeze(1) + 1e-12)
+
+
 class Clamp(nn.Module):
     def __init__(self, min_val: float, max_val: float):
         super().__init__()
@@ -65,7 +70,7 @@ class BaseConcCoder(nn.Module):
                     *[
                         nn.Sequential(
                             nn.Linear(in_dim, out_dim),
-                            nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(),
+                            Norm() if batchnorm else nn.Identity(),
                             nn.ReLU(),
                             nn.Dropout1d() if drop_out else nn.Identity(),
                         )
@@ -80,7 +85,7 @@ class BaseConcCoder(nn.Module):
                     *[
                         nn.Sequential(
                             nn.Linear(in_dim, out_dim),
-                            nn.BatchNorm1d(out_dim) if batchnorm else nn.Identity(),
+                            Norm() if batchnorm else nn.Identity(),
                             nn.ReLU(),
                             nn.Dropout1d() if drop_out else nn.Identity(),
                         )
@@ -130,9 +135,9 @@ class BaseConcCoder(nn.Module):
         constant_in = torch.cat([dgr, kcat, km, rest.flatten()])
         constant_q = self.constant_backbone(constant_in)
         if obs_flux is not None:
-            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux * 1e6), dim=1))
+            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux * 1e6), dim=-1))
         else:
-            k = self.emb_layer(torch.cat((conc, reac_in), dim=1))
+            k = self.emb_layer(torch.cat((conc, reac_in), dim=-1))
         out = k * constant_q.unsqueeze(0)
         return [out_layer(out) for out_layer in self.out_layers]
 
@@ -186,5 +191,5 @@ class BaseDecoder(nn.Module):
     ):
         if self.normalize:
             met, unb, enz, drain = met.log(), unb.log(), enz.log(), drain * 1e6
-        features = torch.cat((met, unb, enz, drain), dim=1)
+        features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)
