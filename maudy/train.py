@@ -34,6 +34,7 @@ def train(
     maud_input: MaudInput,
     num_epochs: int,
     penalize_ss: bool,
+    quench: bool,
     eval_flux: bool,
     eval_conc: bool,
     annealing_epochs: int,
@@ -44,7 +45,7 @@ def train(
     pyro.enable_validation(False)
 
     # Instantiate instance of model/guide and various neural networks
-    maudy = Maudy(maud_input, normalize)
+    maudy = Maudy(maud_input, normalize, quench)
     if torch.cuda.is_available():
         maudy.cuda()
     obs_flux, obs_conc = maudy.get_obs()
@@ -89,6 +90,7 @@ def sample(
     normalize: Annotated[bool, Option(help="Whether to normalize input and output of NN")] = False,
     out_dir: Optional[Path] = None,
     penalize_ss: bool = True,
+    quench: bool = False,
     eval_flux: bool = True,
     eval_conc: bool = True,
     smoke: bool = False,
@@ -96,7 +98,7 @@ def sample(
     """Sample model."""
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, quench, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
     if smoke:
         return
     out = (

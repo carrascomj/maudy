@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
-from .black_box import BaseConcCoder, BaseDecoder, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -55,7 +55,7 @@ def pretty_print_tensor_with_big_brackets(tensor):
 
 
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput, normalize: bool = False):
+    def __init__(self, maud_input: MaudInput, normalize: bool = False, quench: bool = False):
         """Initialize the priors of the model.
 
         maud_input: MaudInput
@@ -71,6 +71,10 @@ class Maudy(nn.Module):
             and drains and fluxes are multiplied by 1e6 (mumol). The output is
             clamped between 0.6 orders of magnitude of the higher and lowest
             observed or prior concentrations.
+        quench: bool, default=False
+            whether to add a model that learns a transformation from steady
+            state concentrations - that fits the SSD and fluxes - to observed
+            concentrations.
         """
         super().__init__()
         self.kinetic_model = maud_input.kinetic_model
@@ -415,7 +419,7 @@ class Maudy(nn.Module):
         # when there are very small values, we need to normalize the conc so that
         # it does not explode
         all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
-        min_max = (all_concs.min().item() - 0.6, all_concs.max().item() + 0.6) if normalize else None
+        min_max = (all_concs.min().item() - 3, all_concs.max().item() + 2) if normalize else None
         self.init_latent = all_concs.mean().item()
         self.normalize = normalize
         self.decoder = BaseDecoder(
@@ -424,6 +428,7 @@ class Maudy(nn.Module):
             enz_dim=len(enzymatic_reactions),
             drain_dim=self.drain_mean.shape[1],
             normalize=min_max,
+            batchnorm=len(self.experiments) > 1,
         )
         nn_encoder = BaseConcCoder(
             met_dims=[len(self.non_optimized_unbalanced_idx)]
@@ -447,6 +452,23 @@ class Maudy(nn.Module):
         if self.has_opt_unb:
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
+        met_dim = len(self.balanced_mics_idx)
+        self.quench = (
+        (
+            lambda _: torch.zeros(
+                (len(self.experiments), met_dim), device=self.water_stoichiometry.device
+            )
+        )
+        if not quench
+        else nn.Sequential(
+            *[
+                nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
+                for in_dim, out_dim in zip(
+                    [met_dim] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
+                )
+            ]
+        )
+        )
 
     def cuda(self):
         super().cuda()
@@ -463,7 +485,7 @@ class Maudy(nn.Module):
         self,
         obs_flux: Optional[torch.FloatTensor] = None,
         obs_conc: Optional[torch.FloatTensor] = None,
-        penalize_ss: bool = True,
+        penalize_ss: bool = False,
         annealing_factor: float = 1.0,
     ):
         """Describe the generative model."""
@@ -549,7 +571,6 @@ class Maudy(nn.Module):
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
             conc[:, self.balanced_mics_idx] = ln_bal_conc.exp()
             conc[:, self.unbalanced_mics_idx] = unb_conc
-            conc_comp = conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
                     "fdx_ratio",
@@ -655,6 +676,11 @@ class Maudy(nn.Module):
                 dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
+            # quenched concentrations
+            conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
+            quench_correction = pyro.deterministic("quench_correction", self.quench(ln_bal_conc))
+            conc_comp[:, self.balanced_mics_idx] = (ln_bal_conc + quench_correction).exp()
+            conc_comp[:, self.unbalanced_mics_idx] = unb_conc
             if penalize_ss:
                 ssd_factor = pyro.deterministic(
                     "ssd_factor",
@@ -676,6 +702,19 @@ class Maudy(nn.Module):
                     ).to_event(1),
                     obs=obs_conc[i][self.obs_conc_mask[i]] if obs_conc is not None else None,
                 )
+            # if penalize_ss:
+            #     ssd_factor = pyro.deterministic(
+            #         "ssd_factor",
+            #         # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
+            #         # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
+            #         1000 * ssd.abs().clamp(1e-11, None).sum(dim=-1),
+            #         # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
+            #         event_dim=1,
+            #     )
+            #     pyro.factor(
+            #         "steady_state_dev",
+            #          -ssd_factor.sum(dim=-1),
+            #     )
 
     def float_tensor(self, x) -> torch.Tensor:
         return torch.tensor(x, device=self.water_stoichiometry.device)

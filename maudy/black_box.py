@@ -172,6 +172,7 @@ class BaseDecoder(nn.Module):
         enz_dim: int,
         drain_dim: int,
         normalize: Optional[tuple[int, int]] = None,
+        batchnorm: bool = False,
     ):
         super().__init__()
         layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
