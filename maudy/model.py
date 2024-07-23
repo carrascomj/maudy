@@ -487,6 +487,7 @@ class Maudy(nn.Module):
         obs_conc: Optional[torch.FloatTensor] = None,
         penalize_ss: bool = False,
         annealing_factor: float = 1.0,
+        train: bool = True,
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
@@ -726,6 +727,7 @@ class Maudy(nn.Module):
         obs_conc: Optional[torch.FloatTensor] = None,
         penalize_ss: bool = False,
         annealing_factor: float = 1.0,
+        train: bool = True,
     ):
         """Establish the variational distributions for SVI."""
         pyro.module("maudy", self)
@@ -778,17 +780,17 @@ class Maudy(nn.Module):
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
-            )
+            ) if train else self.enzyme_concs_loc
             enz_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(
                     enzyme_concs_param_loc, self.enzyme_concs_scale
                 ).to_event(1),
             )
-            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1)
+            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1) if train else self.drain_mean
             drain_std = pyro.param(
                 "drain_std", lambda: self.drain_std, constraint=Positive, event_dim=1
-            )
+            ) if train else self.drain_std
             kcat_drain = (
                 pyro.sample(
                     "kcat_drain",
@@ -801,7 +803,7 @@ class Maudy(nn.Module):
                 "unb_conc_param_loc",
                 self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
                 event_dim=1,
-            )
+            ) if train else self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
             concoder_output = self.concoder(
                 unb_conc_param_loc, dgr, enz_conc, kcat, kcat_drain, km, rest
             )
@@ -827,7 +829,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale).to_event(1),
+                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
                 )
             if self.has_fdx:
                 fdx_ratio = pyro.sample(

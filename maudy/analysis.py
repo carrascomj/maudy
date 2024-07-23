@@ -107,7 +107,7 @@ def report_to_dfs(maudy: Maudy, samples: dict[Any, torch.Tensor], var_names: lis
 
 
 def predict(
-    maudy: Maudy, num_epochs: int, var_names: tuple[str, ...]
+    maudy: Maudy, num_epochs: int, var_names: tuple[str, ...], oos: bool = False
 ) -> dict[Any, torch.Tensor]:
     """Run posterior predictive check."""
     maudy.concoder.set_dropout(0.0)
@@ -118,7 +118,7 @@ def predict(
             guide=guide,
             num_samples=num_epochs,
             return_sites=var_names,
-        )()
+        )(None, None, False, 1.0, not oos)
 
 
 def ppc(model_output: Path, num_epochs: int = 800):
