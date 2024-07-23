@@ -466,7 +466,7 @@ class Maudy(nn.Module):
                 for in_dim, out_dim in zip(
                     [met_dim] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
                 )
-            ]
+            ], nn.Linear(met_dim, met_dim), nn.Softplus()
         )
         )
 
@@ -679,7 +679,7 @@ class Maudy(nn.Module):
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             quench_correction = pyro.deterministic("quench_correction", self.quench(ln_bal_conc))
-            conc_comp[:, self.balanced_mics_idx] = (ln_bal_conc + quench_correction).exp()
+            conc_comp[:, self.balanced_mics_idx] = (ln_bal_conc - quench_correction).exp()
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc
             if penalize_ss:
                 ssd_factor = pyro.deterministic(
