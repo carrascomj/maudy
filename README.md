@@ -15,7 +15,7 @@ to concentrations, a loss on the steady state $Sv[~Boundary] ~ 0$ is applied.
 ## Installation
 
 ```bash
-pip install git+https://github.com/carrascomj.git
+pip install git+https://github.com/carrascomj/maudy.git
 ```
 
 ## Usage
@@ -176,3 +176,13 @@ maudy sample examples/ci_aord_nosyn/ --num-epochs 100000 --annealing-stage 0.2 -
 Again, the result directory must be renamed, in this case to `../results/cauto_results_three_cond_quench_nn_nosyngas`.
 For the analysis of out-of-sample predictions of the quenched model,
 see `notebooks/anamaudy_cauto_oos_quench.ipynb`.
+
+# License
+
+Copyright 2024, Novo Nordisk Foundation Center for Biosustainability, Technical University of Denmark.
+
+Licensed under GNU General Public License, Version 3.0, ([LICENSE](./LICENSE)).
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, shall be licensed as above, without any additional terms or conditions.
