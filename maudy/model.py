@@ -680,42 +680,39 @@ class Maudy(nn.Module):
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             quench_correction = pyro.deterministic("quench_correction", self.quench(ln_bal_conc))
-            conc_comp[:, self.balanced_mics_idx] = (ln_bal_conc - quench_correction).exp()
-            conc_comp[:, self.unbalanced_mics_idx] = unb_conc
-            if penalize_ss:
-                ssd_factor = pyro.deterministic(
-                    "ssd_factor",
-                    ssd.abs() / (ln_bal_conc.exp() + 1e-13),
-                    event_dim=1,
-                )
-                pyro.factor(
-                    "steady_state_dev",
-                    -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
-                )
-            # each experiment, once selected by the mask, might have different
-            # dimensions, thus the loop
+            conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
+            conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
                 pyro.sample(
                     f"y_conc_train_{i}",
                     dist.LogNormal(
-                        conc_comp[i].log()[self.obs_conc_mask[i]],
+                        conc_comp[i][self.obs_conc_mask[i]],
                         self.obs_conc_std[i][self.obs_conc_mask[i]] / annealing_factor,
                     ).to_event(1),
                     obs=obs_conc[i][self.obs_conc_mask[i]] if obs_conc is not None else None,
                 )
-            # if penalize_ss:
-            #     ssd_factor = pyro.deterministic(
-            #         "ssd_factor",
-            #         # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
-            #         # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
-            #         1000 * ssd.abs().clamp(1e-11, None).sum(dim=-1),
-            #         # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
-            #         event_dim=1,
-            #     )
-            #     pyro.factor(
-            #         "steady_state_dev",
-            #          -ssd_factor.sum(dim=-1),
-            #     )
+            if penalize_ss:
+                ssd_factor = pyro.deterministic(
+                    "ssd_factor",
+                    # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
+                    # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
+                    1000 * ssd.abs().clamp(1e-11, None).sum(dim=-1),
+                    # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
+                    event_dim=1,
+                )
+                pyro.factor(
+                    "steady_state_dev",
+                     -ssd_factor.sum(dim=-1),
+                )
+                # ssd_factor = pyro.deterministic(
+                #     "ssd_factor",
+                #     ssd.abs() / (ln_bal_conc.exp() + 1e-13),
+                #     event_dim=1,
+                # )
+                # pyro.factor(
+                #     "steady_state_dev",
+                #     -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
+                # )
 
     def float_tensor(self, x) -> torch.Tensor:
         return torch.tensor(x, device=self.water_stoichiometry.device)
