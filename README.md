@@ -22,8 +22,8 @@ pip install git+https://github.com/carrascomj.git
 
 
 ```bash
- Usage: maudy [OPTIONS] COMMAND [ARGS]...                                                                                                                                                   
-                                                                                                                                                                                            
+ Usage: maudy [OPTIONS] COMMAND [ARGS]...
+
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --install-completion        [bash|zsh|fish|powershell|pwsh]  Install completion for the specified shell. [default: None]                                         │
 │ --show-completion           [bash|zsh|fish|powershell|pwsh]  Show completion for the specified shell, to copy it or customize the installation. [default: None]  │
@@ -38,10 +38,10 @@ pip install git+https://github.com/carrascomj.git
 Use `maudy sample` to run inference:
 
 ```bash
- Usage: maudy sample [OPTIONS] MAUD_DIR                                                                                                                                                     
-                                                                                                                                                                                            
- Sample model.                                                                                                                                                                              
-                                                                                                                                                                                            
+ Usage: maudy sample [OPTIONS] MAUD_DIR
+
+ Sample model.
+        
 ╭─ Arguments ──────────────────────────────────────────╮
 │ *    maud_dir      PATH  [default: None] [required]  │
 ╰──────────────────────────────────────────────────────╯
@@ -62,10 +62,10 @@ Use `maudy sample` to run inference:
 Use `maudy ppc` to run a Posterior Predicitve Check, where some summary statistics for variables for the different conditions will be printed:
 
 ```bash
- Usage: maudy ppc [OPTIONS] MODEL_OUTPUT                                                                                                                                                    
-                                                                                                                                                                                            
- Run posterior predictive check and report it.                                                                                                                                              
-                                                                                                                                                                                            
+ Usage: maudy ppc [OPTIONS] MODEL_OUTPUT
+
+Run posterior predictive check and report it.
+
 ╭─ Arguments ───────────────────────────────────────────────╮
 │ *    model_output      PATH  [default: None] [required]   │
 ╰───────────────────────────────────────────────────────────╯
@@ -129,18 +129,20 @@ Since ferredoxin is a prosthetic group, concepts like $k_m$ and saturation are
 difficult to apply. Additionally, measuring the concentration of the oxidized
 or reduced forms of ferredoxin _in vivo_ is very difficult (well, I don't know
 how to do it, at least). Thus, ferredoxin is treated as a special case where
-only the difference in concentration and in $\Delta G$ is used as a parameter,
+only the differences in concentration and in $\Delta G$ are used as a parameter,
 such that
 
 $$
-\Delta\Delta_f G_{F_d} \sim \mathcal{LN}(77, 1) \\
-\Delta [Fd] \sim \mathcal{N}(\hat{Fd}, 0.1)
+\begin{align}
+\Delta\Delta_f G_{F_d} &\sim \mathcal{LN}(77, 1) \\
+\Delta [Fd] &\sim \mathcal{N}(\hat{Fd}, 0.1)
+\end{align}
 $$
 
-77 kJ/mol arises from the difference in potential associated with transferring
-2 electrons of ferredoxin. To note, not all ferredoxins transfer 2 electrons and
-depending on the enzyme environment and the same Fe-S clusters may have different
-potential difference! The ones implemented (configuration of these priors are
+where 77 kJ/mol arises from the difference in potential associated with transferring
+2 electrons of ferredoxin. To note, not all ferredoxins transfer 2 electrons and,
+depending on the enzyme environment, even the same Fe-S clusters may have different
+potential differences! The ones implemented (configuration of these priors are
 not implemented yet) correspond to the priors for _Clostridium autoethanogenum_.
 
 ## Examples
