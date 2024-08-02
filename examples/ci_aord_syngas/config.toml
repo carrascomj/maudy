@@ -1,0 +1,30 @@
+name = "cauto"
+kinetic_model_file = "kinetic.toml"
+priors_file = "priors.toml"
+experiments_file = "experiments.toml"
+#user_inits_file = "generated_inits.toml"
+likelihood = true
+reject_non_steady = false
+penalize_non_steady = false
+# steady_state_threshold_abs = 1e-3
+steady_state_threshold_rel = 1e-6
+steady_state_threshold_abs = 1e-16
+# steady_state_threshold_opt = {"co_c"=1e-5, "co2_c"=1e-4, "h2_c"=1e-5, pyr_c=2e-8, accoa_c=2e-7, "ac_c"= 1e-10, "etoh_c"= 1e-10}
+drain_small_conc_corrector = 1e-9
+default_initial_concentration = 1e-6
+
+[cmdstanpy_config]
+iter_warmup = 100
+iter_sampling = 100
+chains = 2
+save_warmup = true
+refresh = 1
+metric = "dense"
+max_treedepth = 12
+
+[ode_config]
+rel_tol = 1e-6
+abs_tol = 1e-15
+max_num_steps = 1e5
+# timepoint = 10000
+timepoint = 10000

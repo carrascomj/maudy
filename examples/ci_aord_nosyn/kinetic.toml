@@ -1,0 +1,880 @@
+[[compartment]]
+id = "c"
+name = "Cytoplasm"
+volume = 0.754845
+
+[[compartment]]
+id = "e"
+name = "Extracellular space"
+volume = 0.75
+
+# transport reactions
+
+[[reaction]]
+id = "COTrans"
+name = "CO transport"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+stoichiometry = { co_c = -1, co_e = 1 }
+
+[[reaction]]
+id = "CO2Trans"
+name = "CO2 transport"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+stoichiometry = { co2_c = -1,  co2_e = 1  }
+
+[[reaction]]
+id = "H2Trans"
+name = "H2 transport"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+stoichiometry = { h2_c = -1, h2e_e = 1 }
+
+[[reaction]]
+id = "AcTrans"
+name = "Acetate transport"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.977349
+stoichiometry = { ac_c = -1, ace_e = 1 }
+
+[[reaction]]
+id = "EtohTrans"
+name = "Ethanol transport"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+stoichiometry = { etoh_c = -1, etohe_e = 1 }
+
+[[reaction]]
+id = "BdoTrans"
+name = "Ethanol transport"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+stoichiometry = { bdo_c = -1, bdoe_e = 1 }
+
+[[reaction]]
+id = "BDOOX"
+name = "(R,R)-Butane-2,3-diol:NAD+ oxidoreductase c0"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+pyr_c = -2.0
+nadh_c = -1.0
+nad_c = 1.0
+bdo_c = 1.0
+co2_c = 2.0
+
+# drains
+
+[[reaction]]
+id = "ACCOADRAIN"
+name ="accoa_c drain"
+mechanism = "drain"
+stoichiometry = {accoa_c = -1}
+
+[[reaction]]
+id = "ACTPDRAIN"
+name ="actp_c drain"
+mechanism = "drain"
+stoichiometry = {actp_c = 1}
+
+[[reaction]]
+id = "CO2DRAIN"
+name ="co2_c drain"
+mechanism = "drain"
+stoichiometry = {co2_c = -1}
+
+[[reaction]]
+id = "NADPHDRAIN"
+name ="nadp_c drain"
+mechanism = "drain"
+stoichiometry = {nadph_c = -1, nadp_c = 1}
+
+[[reaction]]
+id = "NADHDRAIN"
+name ="nadh_c drain"
+mechanism = "drain"
+stoichiometry = {nadh_c = -1, nad_c = 1}
+
+[[reaction]]
+id = "PYRDRAIN"
+name ="pyr_c drain"
+mechanism = "drain"
+stoichiometry = {pyr_c = -1}
+
+[[reaction]]
+id = "ACDRAIN"
+name ="Acetate drain"
+mechanism = "drain"
+stoichiometry = {ace_e = -1}
+
+[[reaction]]
+id = "ETOHDRAIN"
+name ="Ethanol drain"
+mechanism = "drain"
+stoichiometry = {etohe_e = -1}
+
+[[reaction]]
+id = "BDODRAIN"
+name ="2,3-Butanediol drain"
+mechanism = "drain"
+stoichiometry = {bdoe_e = -1}
+
+# true reactions
+
+[[reaction]]
+id = "fhl"
+name = "Formate hydrogen lyase"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+# reaction 7 in https://journals.asm.org/doi/10.1128/jb.00678-13
+[reaction.stoichiometry]
+co2_c = -1.0
+h2_c = -1.0
+for_c = 1.0
+
+[[reaction]]
+id = "hyt"
+name = "Electron bifurcating NADP+ hydrogenase"
+mechanism = "reversible_michaelis_menten"
+transported_charge = 0.0
+water_stoichiometry = 0.0
+# reaction 6 in https://journals.asm.org/doi/10.1128/jb.00678-13
+[reaction.stoichiometry]
+nadph_c = -1.0
+nadp_c = 1.0
+h2_c = 2.0
+
+[[reaction]]
+id = "hytfdr"
+name = "Electron bifurcating NADP+ hydrogenase / Formate dehydrogenase"
+mechanism = "reversible_michaelis_menten"
+transported_charge = 0.0
+water_stoichiometry = 0.0
+# table 3 co2 + h2 + fdox + NADP https://journals.asm.org/doi/10.1128/jb.00678-13
+[reaction.stoichiometry]
+co2_c = -1.0
+h2_c = -3.0
+nadp_c = -1.0
+nadph_c = 1.0
+for_c = 1.0
+
+[[reaction]]
+id = "fhlrevhyt"
+name = "Formate-hydrogen lyase coupled with reversed Hydrogenase"
+mechanism = "reversible_michaelis_menten"
+transported_charge = 0.0
+water_stoichiometry = 0.0
+# reaction 8 in https://journals.asm.org/doi/10.1128/jb.00678-13
+[reaction.stoichiometry]
+co2_c = -2.0
+nadph_c = -1.0
+nadp_c = 1.0
+for_c = 2.0
+
+[[reaction]]
+id = "nfn"
+name = "Electron bifurcating NADP+ hydrogenase (Nfn)"
+mechanism = "reversible_michaelis_menten"
+transported_charge = 0.0
+water_stoichiometry = 0.0
+# coupled with hydrogenase
+[reaction.stoichiometry]
+nad_c = -1.0
+nadph_c = -2.0
+nadp_c = 2.0
+nadh_c = 1.0
+
+[[reaction]]
+id = "fthfli"
+name = "Formate:tetrahydrofolate ligase (ADP-forming) c0"
+mechanism = "reversible_michaelis_menten"
+transported_charge = 0.0
+water_stoichiometry = 2.0
+[reaction.stoichiometry]
+atp_c = -1.0
+for_c = -1.0
+adp_c = 1.0
+pi_c = 1.0
+nadph_c = -1.0
+nadp_c = 1.0
+co2_c = -1.0
+nadh_c = -2.0
+coa_c = -1.0
+nad_c = 2.0
+accoa_c = 1.0
+
+[[reaction]]
+id = "codh"
+name = "carbon monoxide dehydrogenase"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = -1.0
+transported_charge = 0.0
+# maybe could be also tied to hydrogenase?
+[reaction.stoichiometry]
+co_c = -1.0
+co2_c = 1.0
+
+[[reaction]]
+id = "pyrs"
+name = "Pyruvate synthase, coupled to CODH"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = -1.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+accoa_c = -1.0
+co_c = -1.0
+coa_c = 1.0
+pyr_c = 1.0
+
+[[reaction]]
+id = "PTAr"
+name = "Acetyl-CoA:orthophosphate acetyltransferase c0"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+accoa_c = -1.0
+pi_c = -1.0
+actp_c = 1.0
+coa_c = 1.0
+
+[[reaction]]
+id = "ackr"
+name = "ATP:acetate phosphotransferase c0"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+actp_c = -1.0
+adp_c = -1.0
+ac_c = 1.0
+atp_c = 1.0
+
+[[reaction]]
+id = "adrcodh"
+name = "Aldehyde oxidorreductase - Ethanol dehydrogenase"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+ac_c = -1.0
+acald_c = 1.0
+co_c = -1.0
+co2_c = 1.0
+
+[[reaction]]
+id = "adr"
+name = "Aldehyde oxidorreductase - Ethanol dehydrogenase"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 1.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+ac_c = -1.0
+acald_c = 1.0
+
+[[reaction]]
+id = "bmcacald"
+name = "Putative metabolosome"
+# https://www.nature.com/articles/nrmicro.2018.10/figures/1 (B)
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+acald_c = -2.0
+pi_c = -1.0
+etoh_c = 1.0
+actp_c = 1.0
+
+[[reaction]]
+id = "rnf"
+name = "Proton-pump electron bifurcating NAD+ hydrogenase, coupled with Hydrogenase"
+mechanism = "reversible_michaelis_menten"
+# summarise the pH difference + the transported charge (against psi and conc gradient)
+transported_charge = -2.615276
+# transported_charge = -2.0
+water_stoichiometry = 0.0
+[reaction.stoichiometry]
+nad_c = -1.0
+nadh_c = 1.0
+
+# acetaldehyde branch
+[[reaction]]
+id = "etohredox"
+name = "Ethanol:NAD+ oxidoreductase c0"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+stoichiometry = { acald_c = -1.0, nadh_c = -1.0, etoh_c = 1.0, nad_c = 1.0 }
+
+[[reaction]]
+id = "acaldr"
+name = "Aldehyde oxidorreductase - Ethanol dehydrogenase"
+mechanism = "reversible_michaelis_menten"
+water_stoichiometry = 0.0
+transported_charge = 0.0
+[reaction.stoichiometry]
+accoa_c = -1.0
+nadh_c = -1.0
+acald_c = 1.0
+nad_c = 1.0
+coa_c = 1.0
+
+[[enzyme]]
+id = "CAETHGRS07665"
+name = "Electron-bifurcating hydrogenase"
+subunits = 1
+
+# unknown (possibly non-existent) transport reactions
+
+[[enzyme]]
+id = "CO2t"
+name = "CO2 transport enzyme"
+subunits = 1
+
+[[enzyme]]
+id = "COt"
+name = "CO transport enzyme"
+subunits = 1
+
+[[enzyme]]
+id = "H2t"
+name = "Hydrogen transport enzyme"
+subunits = 1
+
+[[enzyme]]
+id = "Etoht"
+name = "Ethanol transport enzyme"
+subunits = 1
+
+[[enzyme]]
+id = "Act"
+name = "Acetate transport enzyme"
+subunits = 1
+
+[[enzyme]]
+id = "Bdot"
+name = "Butane-2,3-diol transport enzyme"
+subunits = 1
+
+[[enzyme]]
+id = "RNF"
+name = "Electron bifurcating enzyme + CO hydrogenase"
+subunits = 1
+
+# [[enzyme]]
+# id = "cACS"
+# name = "CODH + Acetyl-CoA Synthase"
+# subunits = 1
+
+[[enzyme]]
+id = "CODH"
+name = "CO dehydrogenase"
+subunits = 1
+
+[[enzyme]]
+id = "FHL"
+name = "Formate Hydrogen Lyase"
+subunits = 1
+
+[[enzyme]]
+id = "ADH"
+name = "Aldehyde oxidorreductase-Ethanol DH"
+subunits = 1
+
+[[enzyme]]
+id = "ADH2"
+name = "Aldehyde oxidorreductase-Ethanol DH"
+subunits = 1
+
+[[enzyme]]
+id = "HytA"
+name = "Hydrogenase"
+subunits = 1
+
+[[enzyme]]
+id = "HytA2"
+name = "Hydrogenase 2"
+subunits = 1
+
+[[enzyme]]
+id = "HytA3"
+name = "Hydrogenase 2"
+subunits = 1
+
+# [[enzyme]]
+# id = "MTHFO"
+# name = "THF bifurcating enzyme"
+# subunits = 1
+
+# [[enzyme]]
+# id = "MTHFO2"
+# name = "THF enzyme"
+# subunits = 1
+
+# [[enzyme]]
+# id = "CAETHGRS07845"
+# name = "THF enzyme"
+# subunits = 1
+
+# [[enzyme_reaction]]
+# enzyme_id = "cACS"
+# reaction_id = "codhacs"
+[[enzyme]]
+id = "cPFOR"
+name = "PFOR + CODH for Pyruvate Synthase"
+subunits = 1
+
+[[enzyme]]
+id = "FTHFLi"
+name = "Formate:THF ligase"
+subunits = 1
+
+[[enzyme]]
+id = "ACK"
+name = "CAETHG_RS16495 in ackr"
+subunits = 1
+
+[[enzyme]]
+id = "CAETHGRS01830"
+name = "CAETHG_RS01830 in rxn2112_c0"
+subunits = 1
+
+[[enzyme]]
+id = "PTA"
+name = "CAETHG_RS16490 in PTAr"
+subunits = 1
+
+[[enzyme]]
+id = "ALCD2ir"
+name = "Ethanol oxidoreductase"
+subunits = 1
+
+[[enzyme]]
+id = "ACALD"
+name = "BMC acald"
+subunits = 1
+
+[[enzyme]]
+id = "BMC"
+name = "BMC acald"
+subunits = 1
+
+[[enzyme_reaction]]
+enzyme_id = "ACALD"
+reaction_id = "acaldr"
+
+[[enzyme_reaction]]
+enzyme_id = "CODH"
+reaction_id = "codh"
+
+[[enzyme_reaction]]
+enzyme_id = "BMC"
+reaction_id = "bmcacald"
+
+[[enzyme_reaction]]
+enzyme_id = "ACK"
+reaction_id = "ackr"
+
+[[enzyme_reaction]]
+enzyme_id = "PTA"
+reaction_id = "PTAr"
+
+[[enzyme_reaction]]
+enzyme_id = "FTHFLi"
+reaction_id = "fthfli"
+
+[[enzyme_reaction]]
+enzyme_id = "cPFOR"
+reaction_id = "pyrs"
+
+[[enzyme_reaction]]
+enzyme_id = "RNF"
+reaction_id = "rnf"
+
+[[enzyme_reaction]]
+enzyme_id = "FHL"
+reaction_id = "fhl"
+
+[[enzyme_reaction]]
+enzyme_id = "ADH"
+reaction_id = "adrcodh"
+
+[[enzyme_reaction]]
+enzyme_id = "ADH2"
+reaction_id = "adr"
+
+[[enzyme_reaction]]
+enzyme_id = "CO2t"
+reaction_id = "CO2Trans"
+
+[[enzyme_reaction]]
+enzyme_id = "COt"
+reaction_id = "COTrans"
+
+[[enzyme_reaction]]
+enzyme_id = "H2t"
+reaction_id = "H2Trans"
+
+[[enzyme_reaction]]
+enzyme_id = "Act"
+reaction_id = "AcTrans"
+
+[[enzyme_reaction]]
+enzyme_id = "Etoht"
+reaction_id = "EtohTrans"
+
+[[enzyme_reaction]]
+enzyme_id = "Bdot"
+reaction_id = "BdoTrans"
+
+[[enzyme_reaction]]
+enzyme_id = "HytA"
+reaction_id = "hyt"
+
+[[enzyme_reaction]]
+# TODO: should be Fdr
+enzyme_id = "HytA2"
+reaction_id = "fhlrevhyt"
+
+[[enzyme_reaction]]
+# TODO: should be Fdr
+enzyme_id = "HytA3"
+reaction_id = "hytfdr"
+
+[[enzyme_reaction]]
+enzyme_id = "CAETHGRS07665"
+reaction_id = "nfn"
+
+[[enzyme_reaction]]
+enzyme_id = "ALCD2ir"
+reaction_id = "etohredox"
+
+[[enzyme_reaction]]
+enzyme_id = "CAETHGRS01830"
+reaction_id = "BDOOX"
+
+# [[enzyme_reaction]]
+# enzyme_id = "MTHFO"
+# reaction_id = "MTHFOcodh"
+
+# [[enzyme_reaction]]
+# enzyme_id = "CAETHGRS07845"
+# reaction_id = "mthfcd"
+
+# [[enzyme_reaction]]
+# enzyme_id = "MTHFO2"
+# reaction_id = "codhacsmetv"
+
+[[metabolite]]
+id = "actp"
+name = "Acetylphosphate"
+inchi_key = "LIPOUNRJVLNBCD-UHFFFAOYSA-N"
+
+[[metabolite]]
+id = "accoa"
+name = "Acetyl-CoA"
+inchi_key = "ZSLZBFCDCINBPY-ZSJPKINUSA-J"
+
+[[metabolite]]
+id = "coa"
+name = "CoA"
+inchi_key = "RGJOEKWQDUBAIZ-IBOSZNHHSA-J"
+
+# [[metabolite]]
+# id = "thf"
+# name = "Tetrahydrofolate"
+# # inchi_key = "MSTNYGQPCMXVAQ-RYUDHWBXSA-L"
+# inchi_key = "bigg.metabolite:thf"
+
+[[metabolite]]
+id = "co"
+name = "Carbon Monoxide"
+# inchi_key = "UGFAIRIUMAVXCW-UHFFFAOYSA-N"
+# equilibrator treats CO as a special case
+inchi_key = "bigg.metabolite:co"
+
+[[metabolite]]
+id = "nadh"
+name = "NADH"
+inchi_key = "BOPGDPNILDQYTO-NNYOXOHSSA-L"
+
+[[metabolite]]
+id = "nad"
+name = "NAD"
+inchi_key = "BAWFJGJZGIEFAR-NNYOXOHSSA-M"
+
+[[metabolite]]
+id = "co2"
+name = "Carbon Dioxide"
+inchi_key = "CURLTUGMZLYLDI-UHFFFAOYSA-N"
+
+[[metabolite]]
+id = "h2"
+name = "H2"
+inchi_key = "UFHFLCQGNIYNRP-UHFFFAOYSA-N"
+
+[[metabolite]]
+id = "h2e"
+name = "H2 (extracellular)"
+inchi_key = "UFHFLCQGNIYNRP-UHFFFAOYSA-N"
+
+[[metabolite]]
+id = "for"
+name = "Formate"
+inchi_key = "bigg.metabolite:for"
+
+[[metabolite]]
+id = "ac"
+name = "Acetate"
+inchi_key = "bigg.metabolite:ac"
+
+[[metabolite]]
+id = "ace"
+name = "Acetate"
+inchi_key = "bigg.metabolite:ac"
+
+[[metabolite]]
+id = "etoh"
+name = "Ethanol"
+inchi_key = "bigg.metabolite:etoh"
+
+[[metabolite]]
+id = "etohe"
+name = "Ethanol"
+inchi_key = "bigg.metabolite:etoh"
+
+[[metabolite]]
+id = "nadph"
+name = "NADPH"
+inchi_key = "ACFIXJIJDZMPPO-NNYOXOHSSA-J"
+
+[[metabolite]]
+id = "nadp"
+name = "NADP"
+inchi_key = "XJLXINKUBYWONI-NNYOXOHSSA-K"
+
+# [[metabolite]]
+# id = "mlthf"
+# name = "5-10-Methylenetetrahydrofolate"
+# inchi_key = "QYNUQALWYRSVHF-OLZOCXBDSA-L"
+
+[[metabolite]]
+id = "pyr"
+name = "Pyruvate"
+inchi_key = "bigg.metabolite:pyr"
+
+# [[metabolite]]
+# id = "10fthf"
+# name = "10-Formyltetrahydrofolate"
+# inchi_key = "AUFGTPPARQZWDO-YPMHNXCESA-L"
+
+[[metabolite]]
+id = "adp"
+name = "ADP"
+inchi_key = "XTWYTFMLZFPYCI-KQYNXXCUSA-K"
+
+[[metabolite]]
+id = "atp"
+name = "ATP"
+inchi_key = "ZKHQWZAMYRWXGA-KQYNXXCUSA-J"
+
+[[metabolite]]
+id = "pi"
+name = "Phosphate"
+inchi_key = "bigg.metabolite:pi"
+
+[[metabolite]]
+id = "acald"
+name = "NADP"
+inchi_key = "bigg.metabolite:acald"
+
+[[metabolite]]
+id = "bdo"
+name = "2,3-Butanediol"
+inchi_key = "OWBTYPJTUOEWEK-UHFFFAOYSA-N"
+
+[[metabolite]]
+id = "bdoe"
+name = "2,3-Butanediol (extracellular)"
+inchi_key = "OWBTYPJTUOEWEK-UHFFFAOYSA-N"
+
+# [[metabolite]]
+# id = "methf"
+# name = "Phosphate"
+# inchi_key = "bigg.metabolite:methf"
+
+[[metabolite_in_compartment]]
+metabolite_id = "accoa"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "acald"
+compartment_id = "c"
+balanced = true
+
+# [[metabolite_in_compartment]]
+# metabolite_id = "methf"
+# compartment_id = "c"
+# balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "pyr"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "coa"
+compartment_id = "c"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "co"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "co"
+compartment_id = "e"
+balanced = false
+
+# [[metabolite_in_compartment]]
+# metabolite_id = "5mthf"
+# compartment_id = "c"
+# balanced = false
+
+# [[metabolite_in_compartment]]
+# metabolite_id = "thf"
+# compartment_id = "c"
+# balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "nad"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "nadh"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "co2"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "co2"
+compartment_id = "e"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "h2"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "h2e"
+compartment_id = "e"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "for"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "ac"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "ace"
+compartment_id = "e"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "etoh"
+compartment_id = "c"
+balanced = true
+
+# [[metabolite_in_compartment]]
+# metabolite_id = "etoh"
+# compartment_id = "e"
+# balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "etohe"
+compartment_id = "e"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "nadph"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "nadp"
+compartment_id = "c"
+balanced = true
+
+# [[metabolite_in_compartment]]
+# metabolite_id = "mlthf"
+# compartment_id = "c"
+# balanced = true
+
+# [[metabolite_in_compartment]]
+# metabolite_id = "10fthf"
+# compartment_id = "c"
+# balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "adp"
+compartment_id = "c"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "atp"
+compartment_id = "c"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "pi"
+compartment_id = "c"
+balanced = false
+
+[[metabolite_in_compartment]]
+metabolite_id = "actp"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "bdo"
+compartment_id = "c"
+balanced = true
+
+[[metabolite_in_compartment]]
+metabolite_id = "bdoe"
+compartment_id = "e"
+balanced = false
+
+[[competitive_inhibition]]
+enzyme_id = "HytA"
+reaction_id = "hyt"
+metabolite_id = "co"
+compartment_id = "c"
+
+[[competitive_inhibition]]
+enzyme_id = "HytA3"
+reaction_id = "hytfdr"
+metabolite_id = "co"
+compartment_id = "c"

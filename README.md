@@ -165,9 +165,10 @@ Each command will generate a directory of results. Rename them to `../results/
 linear_actual_vae` and `../results/example_ode_actual_vae`, respectively, or
 modify the notebook to point it to your result directories.
 
-The notebook at [`notebooks/anamaudy_actual_vae.ipynb`](notebooks/
-anamaudy_actual_vae.ipynb) shows how to get the approximate posterior
-distributions and plot them to generate figures.
+The notebook at [`notebooks/anamaudy_actual_vae.ipynb`](notebooks/anamaudy_actual_vae.ipynb) shows how to get the approximate posterior
+distributions and plot them to generate figures, like
+
+![PPC flux example](./assets/ppc_flux_examples.png)
 
 ### Out-of-sample predictions of _Clostridium autoethanogenum_ on syngas
 
@@ -180,7 +181,9 @@ maudy sample examples/ci_aord_nosyn/ --num-epochs 100000 --annealing-stage 0.2 -
 
 Again, the result directory must be renamed, in this case to `../results/cauto_results_three_cond_quench_nn_nosyngas`.
 For the analysis of out-of-sample predictions of the quenched model,
-see `notebooks/anamaudy_cauto_oos_quench.ipynb`.
+see [`notebooks/anamaudy_cauto_oos_quench.ipynb`](notebooks/anamaudy_cauto_oos_quench.ipynb).
+
+![OOS conc example](./assets/oos_conc_examples.png)
 
 # License
 

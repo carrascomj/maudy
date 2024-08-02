@@ -1,0 +1,56 @@
+[[experiment]]
+id = "highh2co"
+is_train = true
+is_test = true
+temperature = 310.15
+measurements = [
+ {target_type="mic",metabolite="accoa",compartment="c",value=3.747230102218455e-07,error_scale=0.1334199915028026},
+ {target_type="mic",metabolite="pyr",compartment="c",value=6.980126712539978e-08,error_scale=0.0728669459427062},
+ {target_type="mic",metabolite="actp",compartment="c",value=1.0605066363270137e-07,error_scale=0.5646457561435798},
+ {target_type="mic",metabolite="nadp",compartment="c",value=3.57489031344943E-06,error_scale=2.0},
+ {target_type="mic",metabolite="nadph",compartment="c",value=6.00093474058932E-07,error_scale=2.0},
+ {target_type="mic",metabolite="nad",compartment="c",value=1.15704207105208E-05,error_scale=2.0},
+ {target_type="mic",metabolite="nadh",compartment="c",value=2.39153552122847E-06,error_scale=2.0},
+ {target_type="flux",reaction="H2Trans",value=-1.1720812008337658e-05,error_scale=5.258495996224088e-06},
+ {target_type="flux",reaction="COTrans",value=-7.653484870790792e-06,error_scale=2.197066736564182e-06},
+ {target_type="flux",reaction="CO2Trans",value=1.4015042084052268e-06,error_scale=3.0571733044013596e-07},
+ {target_type="flux",reaction="AcTrans",value=7.41874159595679E-07,error_scale=6.83234530629349E-08},
+ {target_type="flux",reaction="EtohTrans",value=3.00613591752832E-06,error_scale=1.91358729997711E-07},
+ {target_type="flux",reaction="BDOOX",value=0,error_scale=6.230839821601E-10},
+]
+initial_state = [
+ {metabolite="for",compartment="c",value=5.765575794619591e-08},
+ {metabolite="ac",compartment="c",value=0.008671708715776},
+ {metabolite="etoh",compartment="c",value=0.0016278820546630362},
+ {metabolite="co",compartment="c",value=5e-5},
+ {metabolite="co2",compartment="c",value=1.7e-5},
+ {metabolite="h2",compartment="c",value=2.722040293431613e-04},
+]
+
+[[experiment]]
+id = "co"
+is_train = true
+is_test = true
+temperature = 310.15
+measurements = [
+ {target_type="mic",metabolite="accoa",compartment="c",value=3.5593533852920223e-07,error_scale=0.31718441044208684},
+ {target_type="mic",metabolite="pyr",compartment="c",value=4.500672648042546e-08,error_scale=0.29847772328987127},
+ {target_type="mic",metabolite="actp",compartment="c",value=2.8682092595904703e-08,error_scale=0.08515626790307738},
+ {target_type="mic",metabolite="nadp",compartment="c",value=1.55591282562117E-06,error_scale=2.0},
+ {target_type="mic",metabolite="nadph",compartment="c",value=8.07737972207688E-08,error_scale=2.0},
+ {target_type="mic",metabolite="nad",compartment="c",value=6.27205015975542E-06,error_scale=2.0},
+ {target_type="mic",metabolite="nadh",compartment="c",value=6.36330737342325E-07,error_scale=2.0},
+ {target_type="flux",reaction="H2Trans",value=1.827777060858804e-07,error_scale=0.5e-07},
+ {target_type="flux",reaction="COTrans",value=-7.555610234443426e-06,error_scale=3e-06},
+ {target_type="flux",reaction="CO2Trans",value=8.431107736478885e-06,error_scale=3e-06},
+ {target_type="flux",reaction="AcTrans",value=1.20554550934298E-06,error_scale=3.22508771774494E-08},
+ {target_type="flux",reaction="EtohTrans",value=9.96893401956693E-07,error_scale=2.84596062322379E-08},
+ {target_type="flux",reaction="BDOOX",value=2.3183567487365E-08,error_scale=2.230839821601E-09},
+]
+initial_state = [
+ {metabolite="for",compartment="c",value=6.3524172718091155e-06},
+ {metabolite="etoh",compartment="c",value=0.0047548363088612145},
+ {metabolite="co",compartment="c",value=4.787158703093049e-05},
+ {metabolite="h2",compartment="c",value=4.397206212538002e-05},
+ {metabolite="co2",compartment="c",value=0.0066523522185847886},
+]

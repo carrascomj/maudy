@@ -1,0 +1,28 @@
+[[experiment]]
+id = "syngas"
+is_train = true
+is_test = true
+temperature = 310.15
+measurements = [
+ {target_type="mic",metabolite="accoa",compartment="c",value=3.81035334326532E-07,error_scale=0.400252351011},
+ {target_type="mic",metabolite="pyr",compartment="c",value=2.71045891218754E-07,error_scale=0.186422523856267},
+ {target_type="mic",metabolite="actp",compartment="c",value=7.80102241065273E-07,error_scale=0.25149761269684},
+ {target_type="mic",metabolite="nadp",compartment="c",value=2.48362238905024E-06,error_scale=2.0},
+ {target_type="mic",metabolite="nadph",compartment="c",value=1.90049864377164E-07,error_scale=2.0},
+ {target_type="mic",metabolite="nad",compartment="c",value=6.02776709814066E-06,error_scale=2.0},
+ {target_type="mic",metabolite="nadh",compartment="c",value=4.12151981536425E-08,error_scale=2.0},
+ {target_type="flux",reaction="H2Trans",value=-6.443886311334366e-06,error_scale=5.216665780000356e-07},
+ {target_type="flux",reaction="COTrans",value=-1.5720012109217382e-05,error_scale=5.533515092149514e-06},
+ {target_type="flux",reaction="CO2Trans",value=3.008729202402049e-07,error_scale=5.7267629872826418e-08},
+ {target_type="flux",reaction="AcTrans",value=1.64216936368835E-06,error_scale=1.03823965955274E-07},
+ {target_type="flux",reaction="EtohTrans",value=1.44510904004575E-06,error_scale=2.18576770432155E-08},
+ {target_type="flux",reaction="BDOOX",value=3.43889584395914E-08,error_scale=5.46441926080392E-9},
+]
+initial_state = [
+ {metabolite="for",compartment="c",value=6.3524172718091155e-06},
+ {metabolite="co",compartment="c",value=0.0017814298345844273},
+ {metabolite="h2",compartment="c",value=7.412685020639512e-06},
+ {metabolite="co2",compartment="c",value=0.0026220736179355694},
+ {metabolite="etoh",compartment="c",value=0.0011401754250991384},
+ {metabolite="ac",compartment="c",value=0.0015853935082408845},
+]
