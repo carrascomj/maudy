@@ -1,6 +1,6 @@
 # maudy
 
-We have a kinetics-informed Bayesian neural network that solves accepts three kinds of variables:
+We have a neural-embedded Bayesian kinetic model that solves three kinds of variables through Stochastic Variational Inference:
 
 1. Boundary variables.
 2. Observed variables.
