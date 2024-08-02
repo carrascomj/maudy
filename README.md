@@ -12,6 +12,11 @@ are computed given all variables. Finally, the likelihood is computed for the
 observed variables and, for the observed and innacessible variables that refer
 to concentrations, a loss on the steady state $Sv[~Boundary] ~ 0$ is applied.
 
+* [Installation](#installation)
+* [Usage](#usage)
+* [Examples](#examples)
+* [Licensing and copyright](#license)
+ 
 ## Installation
 
 ```bash
