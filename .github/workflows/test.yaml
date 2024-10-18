@@ -30,6 +30,6 @@ jobs:
       run: rye sync --no-lock
     - name: Run Integration testing
       run: |
-        _TYPER_STANDARD_TRACEBACK=1 maudy sample examples/linear --num-epochs 100
-        _TYPER_STANDARD_TRACEBACK=1 maudy sample examples/example_ode --num-epochs 100
-        _TYPER_STANDARD_TRACEBACK=1 maudy sample examples/ci_aord_nosyn --num-epochs 100 --normalize
+        _TYPER_STANDARD_TRACEBACK=1 rye run maudy sample examples/linear --num-epochs 100
+        _TYPER_STANDARD_TRACEBACK=1 rye run maudy sample examples/example_ode --num-epochs 100
+        _TYPER_STANDARD_TRACEBACK=1 rye run maudy sample examples/ci_aord_nosyn --num-epochs 100 --normalize
