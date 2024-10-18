@@ -1,0 +1,35 @@
+name: integration
+
+on:
+  push:
+    branches:
+    - trunk
+    paths-ignore:
+    - "COPYRIGHT"
+    - "LICENSE-*"
+    - "**.md"
+    - "**.txt"
+  pull_request:
+    branches:
+    - trunk
+    paths-ignore:
+    - "COPYRIGHT"
+    - "LICENSE-*"
+    - "**.md"
+    - "**.txt"
+
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: eifinger/setup-rye@v4
+      id: setup-rye
+    - name: Setup dependencies
+      run: rye sync --no-lock
+    - name: Run Integration testing
+      run: |
+        _TYPER_STANDARD_TRACEBACK=1 maudy sample examples/linear --num-epochs 100
+        _TYPER_STANDARD_TRACEBACK=1 maudy sample examples/example_ode --num-epochs 100
+        _TYPER_STANDARD_TRACEBACK=1 maudy sample examples/ci_aord_nosyn --num-epochs 100 --normalize
