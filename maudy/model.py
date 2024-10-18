@@ -320,35 +320,41 @@ class Maudy(nn.Module):
         self.has_allostery = False
         if dc.location:
             self.has_allostery = True
-            dc_map = {}
+            dc_map = []
             for dc_id in dc.ids[0]:
                 enzyme, met, comp, atype = dc_id.split("_", 3)
-                dc_map[enzyme] = (
+                dc_map.append((
                     enzymes.index(enzyme),
                     mics.index(f"{met}_{comp}"),
                     atype,
-                )
+                ))
             self.dc_loc = torch.FloatTensor(dc.location)
             self.dc_scale = torch.FloatTensor(dc.scale)
             self.tc_loc = torch.FloatTensor(tc.location)
             self.tc_scale = torch.FloatTensor(tc.scale)
-            self.allostery_idx = torch.LongTensor([
-                dc_map[enz][0] for enz in enzymes if enz in dc_map
-            ])
+            # the index that maps from enzyme reactions to an allosterism
+            all_enz_idx = list(set([enz[0] for enz in dc_map]))
+            self.allostery_reaction_idx = torch.LongTensor(all_enz_idx)
+            # indices to map the allosterism to the reactions indexed by allostery_reaction_idx
+            self.d_to_reac_act = torch.LongTensor([all_enz_idx.index(enz[0]) if enz[2] == "activation" else -1 for enz in dc_map])
+            self.d_to_reac_inh = torch.LongTensor([all_enz_idx.index(enz[0]) if enz[2] != "activation" else -1 for enz in dc_map])
             self.conc_allostery_idx = torch.LongTensor([
-                dc_map[enz][1] for enz in enzymes if enz in dc_map
+                enz[1] for enz in dc_map
             ])
             self.allostery_activation = torch.BoolTensor([
-                dc_map[enz][2] == "activation" for enz in enzymes if enz in dc_map
+                enz[2] == "activation" for enz in dc_map
             ])
+            # indices to map the tc to the reactions indexed by allostery_reaction_idx
+            tc_ids = [enzymes.index(tc_id) for tc_id in tc.ids[0]]
+            self.tc_idx = torch.LongTensor([tc_ids.index(enz) for enz in all_enz_idx])
+            # subunits are simply gathered as per all_enz_idx
             self.subunits = torch.IntTensor([
                 next(
                     kin_enz.subunits
                     for kin_enz in self.kinetic_model.enzymes
-                    if kin_enz.id == enz
+                    if kin_enz.id == enzymes[enz_idx]
                 )
-                for enz in enzymes
-                if enz in dc_map
+                for enz_idx in all_enz_idx
             ])
 
         self.obs_fluxes = torch.FloatTensor([
@@ -441,6 +447,7 @@ class Maudy(nn.Module):
             drain_dim=self.drain_mean.shape[1] if len(self.drain_mean.size()) else 0,
             ki_dim=self.ki_loc.shape[0] if hasattr(self, "ki_loc") else 0,
             tc_dim=self.tc_loc.shape[0] if hasattr(self, "tc_loc") else 0,
+            dc_dim=self.dc_loc.shape[0] if hasattr(self, "dc_loc") else 0,
             # batch norm and dropout won't work without a batch dim
             drop_out=len(self.experiments) > 1,
             batchnorm=len(self.experiments) > 1,
@@ -631,9 +638,11 @@ class Maudy(nn.Module):
                         free_enzyme_ratio,
                         tc,
                         dc,
-                        self.allostery_activation,
-                        self.allostery_idx,
+                        self.allostery_reaction_idx,
+                        self.d_to_reac_act,
+                        self.d_to_reac_inh,
                         self.conc_allostery_idx,
+                        self.tc_idx,
                         self.subunits,
                     ),
                     event_dim=1,

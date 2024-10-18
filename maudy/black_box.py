@@ -31,6 +31,7 @@ class BaseConcCoder(nn.Module):
         drain_dim: int = 0,
         ki_dim: int = 0,
         tc_dim: int = 0,
+        dc_dim: int = 0,
         obs_flux_dim: int = 0,
         drop_out: bool = False,
         batchnorm: bool = True,
@@ -44,7 +45,7 @@ class BaseConcCoder(nn.Module):
         reac_dim += drain_dim
         # kms
         constant_dims = km_dims.copy()
-        constant_dims[0] = constant_dims[0] + 2 * n_enz_reac + ki_dim + tc_dim * 2
+        constant_dims[0] = constant_dims[0] + 2 * n_enz_reac + ki_dim + tc_dim + dc_dim
         self.constant_backbone = nn.Sequential(
             *[
                 nn.Sequential(nn.Linear(in_dim, out_dim), nn.SiLU())

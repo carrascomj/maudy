@@ -11,5 +11,4 @@ wheels/
 
 # default output names of maudy
 maudyout_*
-examples/
 results/

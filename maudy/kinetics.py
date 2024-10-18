@@ -142,19 +142,31 @@ def get_allostery(
     free_enzyme_ratio: Vector,
     transfer: Vector,  # only one per enzyme
     dissociation: Vector,  # only one per enzyme (either act or inh)
-    is_activation: torch.BoolTensor,  # 1 if act; 0 if inh
-    reac_idx: torch.LongTensor,  # index of corresponding reactions
-    conc_idx: ReacIndex,
+    reac_idx: torch.LongTensor,  # index of reactions to reaction with allosterism
+    d_to_act: torch.LongTensor,  # index from act to reactions with allosterim (-1 if allosterism but not act)
+    d_to_inh: torch.LongTensor,  # index from inh to reactions with allosterim (-1 if allosterism but not inh)
+    conc_idx: ReacIndex,         # from concentrations to inh/act dissociations
+    tc_idx: torch.LongTensor,    # index from transfer to reactions with allosterim
     subunits: Vector,
 ):
     out = torch.ones_like(free_enzyme_ratio)
     allostery = conc[:, conc_idx] / dissociation
-    act_denom = 1.0 + is_activation * allostery
-    inh_num = 1.0 + ~is_activation * allostery
+
+    # calculate Q
+    N = len(reac_idx)
+    num = torch.ones((out.shape[0], N), dtype=allostery.dtype, device=allostery.device)
+    denom = torch.ones((out.shape[0], N), dtype=allostery.dtype, device=allostery.device)
+    # -1 in any index indicate no allostery modification
+    num_mask = d_to_inh != -1
+    denom_mask = d_to_act != -1
+    num[:, d_to_inh[num_mask]] += allostery[:, d_to_inh[num_mask]]
+    denom[:, d_to_act[denom_mask]] += allostery[:, d_to_act[denom_mask]]
+
+    q = num / denom
     out[..., reac_idx] = 1 / (
         1
-        + transfer
-        * (free_enzyme_ratio[..., reac_idx] * inh_num / act_denom) ** subunits
+        + transfer[tc_idx]
+        * (free_enzyme_ratio[..., reac_idx] * q) ** subunits
     )
     return out
 
