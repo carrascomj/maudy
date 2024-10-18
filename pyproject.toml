@@ -10,7 +10,7 @@ dependencies = [
     "pyro-ppl>=1.9.1",
     "tqdm>=4.66.4",
     "typer-slim>=0.12.3",
-    "maud-metabolic-models @ git+https://github.com/carrascomj/Maud",
+    "maud-metabolic-models @ git+https://github.com/carrascomj/Maud#egg=3a7ee1ece4afbf445a8af5d2d550ede4eb5ec7a9",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

@@ -47,7 +47,7 @@ markupsafe==2.1.5
 matplotlib==3.9.0
     # via arviz
     # via maud-metabolic-models
-maud-metabolic-models @ git+https://github.com/carrascomj/Maud@9747fe63f8627cffcaf38413ea412abebc0dd952
+maud-metabolic-models @ git+https://github.com/carrascomj/Maud@3a7ee1ece4afbf445a8af5d2d550ede4eb5ec7a9#egg=3a7ee1ece4afbf445a8af5d2d550ede4eb5ec7a9
     # via maudy
 mpmath==1.3.0
     # via sympy

@@ -71,7 +71,7 @@ matplotlib==3.9.0
 matplotlib-inline==0.1.7
     # via ipykernel
     # via ipython
-maud-metabolic-models @ git+https://github.com/carrascomj/Maud@9747fe63f8627cffcaf38413ea412abebc0dd952
+maud-metabolic-models @ git+https://github.com/carrascomj/Maud@3a7ee1ece4afbf445a8af5d2d550ede4eb5ec7a9#egg=3a7ee1ece4afbf445a8af5d2d550ede4eb5ec7a9
     # via maudy
 mizani==0.11.4
     # via plotnine
