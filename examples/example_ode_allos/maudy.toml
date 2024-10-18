@@ -1,0 +1,5 @@
+[neural_network]
+met_dims = [128, 64, 64, 64, 128]
+reac_dims = [128, 128, 128, 16]
+km_dims = [128, 64, 128, 16]
+
