@@ -34,3 +34,5 @@ jobs:
         _TYPER_STANDARD_TRACEBACK=1 rye run maudy sample examples/example_ode --num-epochs 100
         _TYPER_STANDARD_TRACEBACK=1 rye run maudy sample examples/example_ode_allos --num-epochs 100
         _TYPER_STANDARD_TRACEBACK=1 rye run maudy sample examples/ci_aord_nosyn --num-epochs 100 --normalize
+    - name: Run unit tests
+      run: rye run pytest
