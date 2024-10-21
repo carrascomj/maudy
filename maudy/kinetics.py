@@ -169,7 +169,7 @@ def get_allostery(
     q = num / denom
     out[..., reac_idx] = 1 / (
         1
-        + transfer[tc_idx]
+        + transfer[..., tc_idx]
         * (free_enzyme_ratio[..., reac_idx] * q) ** subunits
     )
     return out
