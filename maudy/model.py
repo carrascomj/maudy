@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
+from maud.data_model.kinetic_model import ReactionMechanism
 from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
@@ -124,6 +125,14 @@ class Maudy(nn.Module):
             .values
         )
         self.dgf_cov = torch.linalg.cholesky(dgf_cov)
+        # irreversible mechanisms such that reversibility == 1
+        mechanisms = {
+            reac.id: 0
+            if reac.mechanism == ReactionMechanism.irreversible_michaelis_menten
+            else 1
+            for reac in self.kinetic_model.reactions
+        }
+        self.irreversible = torch.BoolTensor([mechanisms[enz_reac] for enz_reac in enzymatic_reactions])
         self.experiments = ec.ids[0]
         self.num_reactions = len(reactions)
         self.num_mics = len(mics)
@@ -595,6 +604,7 @@ class Maudy(nn.Module):
                 self.prod_km_idx,
                 self.substrate_S,
                 self.product_S,
+                self.irreversible,
             )
             free_enz_ki_denom = (
                 pyro.deterministic(
@@ -619,7 +629,7 @@ class Maudy(nn.Module):
             rev = pyro.deterministic(
                 "rev",
                 get_reversibility(
-                    self.S_enz_thermo, dgr, conc, self.transported_charge, psi
+                    self.S_enz_thermo, dgr, conc, self.transported_charge, psi, self.irreversible
                 ),
                 event_dim=1,
             )

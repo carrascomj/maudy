@@ -47,6 +47,7 @@ def get_free_enzyme_ratio_denom(
     prod_km_idx: list[Vector],
     substrate_S: list[Vector],
     product_S: list[Vector],
+    irr: Vector,
 ) -> Vector:
     prod_contr = torch.stack(
         [
@@ -58,7 +59,7 @@ def get_free_enzyme_ratio_denom(
             for conc_idx, km_idx, st in zip(prod_conc_idx, prod_km_idx, product_S)
         ],
         dim=1,
-    )
+    ) * irr  # 0 == irreversible, no information from products
     sub_contr = torch.stack(
         [
             ((1 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1)
@@ -83,7 +84,8 @@ def get_competitive_inhibition_denom(
 
 
 def get_reversibility(
-    S: Matrix, dgr: Vector, conc: Vector, trans_charge: Vector, psi: torch.Tensor
+    S: Matrix, dgr: Vector, conc: Vector, trans_charge: Vector, psi: torch.Tensor,
+    irr: Vector,
 ) -> Vector:
     """Add the membrane potential to dgr and compute reversibility."""
     return 1 - torch.exp(
@@ -93,7 +95,7 @@ def get_reversibility(
             + RT * (conc.log() @ S)
         )
         / RT
-    )
+    ) * irr  # reversibility is 1 for irreversible reactions (irr == 0)
 
 
 def get_vmax(kcat: Vector, enzyme_conc: Vector) -> Vector:
