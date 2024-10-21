@@ -88,14 +88,16 @@ def get_reversibility(
     irr: Vector,
 ) -> Vector:
     """Add the membrane potential to dgr and compute reversibility."""
-    return 1 - torch.exp(
+    rev = torch.ones((conc.shape[0], dgr.shape[0]), device=dgr.device)
+    rev[:, irr] = 1 - torch.exp(
         (
-            dgr.unsqueeze(0)
-            + trans_charge.unsqueeze(0) * psi * F
-            + RT * (conc.log() @ S)
+            dgr[irr].unsqueeze(0)
+            + trans_charge[irr].unsqueeze(0) * psi * F
+            + RT * (conc.log() @ S)[:, irr]
         )
         / RT
-    ) * irr  # reversibility is 1 for irreversible reactions (irr == 0)
+    )
+    return rev
 
 
 def get_vmax(kcat: Vector, enzyme_conc: Vector) -> Vector:
