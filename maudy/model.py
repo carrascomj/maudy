@@ -469,6 +469,16 @@ class Maudy(nn.Module):
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
         met_dim = len(self.balanced_mics_idx)
+        # users-defined groups that are quenched with opposing parameters
+        quenching_groups = maud_input._maudy_config.quenching_groups
+        self.quench_groups = (
+            [
+                torch.LongTensor([bal_mics.index(met) for met in q_group])
+                for q_group in quenching_groups
+            ]
+            if quenching_groups and quench
+            else []
+        )
         self.quench = (
         (
             lambda _: torch.zeros(
@@ -482,9 +492,22 @@ class Maudy(nn.Module):
                 for in_dim, out_dim in zip(
                     [met_dim] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
                 )
-            ], nn.Linear(met_dim, met_dim), nn.Softplus()
+            ], nn.Linear(met_dim, met_dim)
         )
         )
+
+    def correct_quenching(self, ln_bal_conc: torch.Tensor):
+        """Gets quenching correction (if `self.quench` is True).
+
+        Mass conservation is forced through `self.quenched_groups`.
+        """
+        quench_correction = self.quench(ln_bal_conc)
+        for group_idx in self.quench_groups:
+            sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
+            exp_norm_q = nn.functional.softmax(quench_correction[:, group_idx].exp())
+            quench_correction[:, group_idx] = (ln_bal_conc[:, group_idx] -
+                (sum_conc * exp_norm_q).log())
+        return quench_correction
 
     def cuda(self):
         super().cuda()
@@ -698,7 +721,7 @@ class Maudy(nn.Module):
             )
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-            quench_correction = pyro.deterministic("quench_correction", self.quench(ln_bal_conc))
+            quench_correction = pyro.deterministic("quench_correction", self.correct_quenching(ln_bal_conc))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:

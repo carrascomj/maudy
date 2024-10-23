@@ -39,7 +39,7 @@ def train(
     eval_conc: bool,
     annealing_epochs: int,
     normalize: bool,
-):
+) -> tuple[Maudy, PyroOptim]:
     pyro.clear_param_store()
     # Enable optional validation warnings
     pyro.enable_validation(False)

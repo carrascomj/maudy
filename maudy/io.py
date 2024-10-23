@@ -15,6 +15,7 @@ class MaudyConfig(BaseModel):
     ferredoxin: Optional[dict[str, float]] = None
     neural_network: NeuralNetworkConfig = Field(default_factory=NeuralNetworkConfig)
     optimize_unbalanced_metabolites: list[str] = []
+    quenching_groups: list[list[str]] = []
 
 
 def load_maudy_config(maud_dir: Path) -> MaudyConfig:

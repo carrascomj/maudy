@@ -1,0 +1,20 @@
+# optimize_unbalanced_metabolites = ["pi_c", "atp_c", "adp_c", "coa_c"]
+quenching_groups = [["nad_c", "nadh_c"], ["nadp_c", "nadph_c"]]
+
+[ferredoxin]
+hyt = -1
+hytfdr = 1
+fhlrevhyt = -1
+codh = 1
+adr = -1
+nfn = 1
+rnf = -1
+
+[neural_network]
+met_dims = [512, 1024, 1024, 1024, 512, 256]
+reac_dims = [512, 512, 512, 16]
+km_dims = [512, 1024, 512, 512, 256]
+
+
+
+

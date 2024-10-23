@@ -23,6 +23,12 @@ def example_ode_model() -> MaudInput:
     return load(linear_path)
 
 
+@fixture
+def ci_aord_model() -> MaudInput:
+    linear_path = Path(__file__).parent.parent / "examples" / "ci_aord_quench"
+    return load(linear_path)
+
+
 @fixture(params=["linear", "example_ode_allos"])
 def maud_input(request):
     return load(Path(__file__).parent.parent / "examples" / request.param)
