@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import warnings
 from typer import Option
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +97,8 @@ def sample(
     smoke: bool = False,
 ):
     """Sample model."""
+    if smoke and out_dir is not None:
+        warnings.warn("Running smoke test but `--out-dir` was specified!")
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
     maudy, optimizer = train(maud_input, num_epochs, penalize_ss, quench, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
