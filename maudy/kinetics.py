@@ -145,10 +145,12 @@ def get_allostery(
     conc: Vector,
     free_enzyme_ratio: Vector,
     transfer: Vector,  # only one per enzyme
-    dissociation: Vector,  # only one per enzyme (either act or inh)
+    dissociation: Vector,
     reac_idx: torch.LongTensor,  # index of reactions to reaction with allosterism
-    d_to_act: torch.LongTensor,  # index from act to reactions with allosterim (-1 if allosterism but not act)
-    d_to_inh: torch.LongTensor,  # index from inh to reactions with allosterim (-1 if allosterism but not inh)
+    d_to_act: torch.LongTensor,  # index from act dc to reactions with allosterim (-1 if allosterism but not act)
+    d_to_inh: torch.LongTensor,  # index from inh dc to reactions with allosterim (-1 if allosterism but not inh)
+    q_to_act: torch.LongTensor,  # index from reactions with allosterim to act (-1 if allosterism but not act)
+    q_to_inh: torch.LongTensor,  # index from reactions with allosterim to inh (-1 if allosterism but not inh)
     conc_idx: ReacIndex,         # from concentrations to inh/act dissociations
     tc_idx: torch.LongTensor,    # index from transfer to reactions with allosterim
     subunits: Vector,
@@ -161,10 +163,12 @@ def get_allostery(
     num = torch.ones((out.shape[0], N), dtype=allostery.dtype, device=allostery.device)
     denom = torch.ones((out.shape[0], N), dtype=allostery.dtype, device=allostery.device)
     # -1 in any index indicate no allostery modification
-    num_mask = d_to_inh != -1
-    denom_mask = d_to_act != -1
-    num[:, d_to_inh[num_mask]] += allostery[:, d_to_inh[num_mask]]
-    denom[:, d_to_act[denom_mask]] += allostery[:, d_to_act[denom_mask]]
+    d_denom_mask = d_to_act != -1
+    q_denom_mask = q_to_act != -1
+    for q_idx, allostery_idx in zip(q_to_inh[q_to_inh != -1], d_to_inh[d_to_inh != -1]):
+        num[:, q_idx] += allostery[:, allostery_idx]
+    for q_idx, allostery_idx in zip(q_to_act[q_denom_mask], d_to_act[d_denom_mask]):
+        denom[:, q_idx] += allostery[:, allostery_idx]
 
     q = num / denom
     out[..., reac_idx] = 1 / (

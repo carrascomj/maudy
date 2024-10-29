@@ -32,29 +32,6 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
-def pretty_print_tensor_with_big_brackets(tensor):
-    # Ensure the tensor is a float type for proper formatting
-    tensor = tensor.float()
-    # Convert tensor to a list of lists for easy printing
-    tensor_list = tensor.tolist()
-    # Pretty print each element with 4 decimal places
-    formatted_tensor = [[f"{element:.4f}" for element in row] for row in tensor_list]
-
-    # Define the big bracket components
-    top_bracket = "⎡ "
-    middle_bracket = "⎢ "
-    bottom_bracket = "⎣ "
-
-    # Print the formatted tensor with big brackets
-    for i, row in enumerate(formatted_tensor):
-        if i == 0:
-            print(top_bracket + "  ".join(row) + " ⎤")
-        elif i == len(formatted_tensor) - 1:
-            print(bottom_bracket + "  ".join(row) + " ⎦")
-        else:
-            print(middle_bracket + "  ".join(row) + " ⎥")
-
-
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, normalize: bool = False, quench: bool = False):
         """Initialize the priors of the model.
@@ -345,13 +322,12 @@ class Maudy(nn.Module):
             all_enz_idx = list(set([enz[0] for enz in dc_map]))
             self.allostery_reaction_idx = torch.LongTensor(all_enz_idx)
             # indices to map the allosterism to the reactions indexed by allostery_reaction_idx
-            self.d_to_reac_act = torch.LongTensor([all_enz_idx.index(enz[0]) if enz[2] == "activation" else -1 for enz in dc_map])
-            self.d_to_reac_inh = torch.LongTensor([all_enz_idx.index(enz[0]) if enz[2] != "activation" else -1 for enz in dc_map])
+            self.q_to_reac_act = torch.LongTensor([all_enz_idx.index(enz[0]) if enz[2] == "activation" else -1 for enz in dc_map])
+            self.q_to_reac_inh = torch.LongTensor([all_enz_idx.index(enz[0]) if enz[2] != "activation" else -1 for enz in dc_map])
+            self.d_to_reac_act = torch.LongTensor([i if enz[2] == "activation" else -1 for i, enz in enumerate(dc_map)])
+            self.d_to_reac_inh = torch.LongTensor([i if enz[2] != "activation" else -1 for i, enz in enumerate(dc_map)])
             self.conc_allostery_idx = torch.LongTensor([
                 enz[1] for enz in dc_map
-            ])
-            self.allostery_activation = torch.BoolTensor([
-                enz[2] == "activation" for enz in dc_map
             ])
             # indices to map the tc to the reactions indexed by allostery_reaction_idx
             tc_ids = [enzymes.index(tc_id) for tc_id in tc.ids[0]]
@@ -674,6 +650,8 @@ class Maudy(nn.Module):
                         self.allostery_reaction_idx,
                         self.d_to_reac_act,
                         self.d_to_reac_inh,
+                        self.q_to_reac_act,
+                        self.q_to_reac_inh,
                         self.conc_allostery_idx,
                         self.tc_idx,
                         self.subunits,
