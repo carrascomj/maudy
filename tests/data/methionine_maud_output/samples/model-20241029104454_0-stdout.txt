@@ -1,0 +1,39 @@
+method = sample (Default)
+  sample
+    num_samples = 1
+    num_warmup = 1000 (Default)
+    save_warmup = 0 (Default)
+    thin = 1 (Default)
+    adapt
+      engaged = 1 (Default)
+      gamma = 0.05 (Default)
+      delta = 0.8 (Default)
+      kappa = 0.75 (Default)
+      t0 = 10 (Default)
+      init_buffer = 75 (Default)
+      term_buffer = 50 (Default)
+      window = 25 (Default)
+      save_metric = 0 (Default)
+    algorithm = fixed_param
+    num_chains = 1 (Default)
+id = 1 (Default)
+data
+  file = ./maud_output_sim-methionine_cycle_6-20241029104451/samples/input_data_train.json
+init = ./maud_output_sim-methionine_cycle_6-20241029104451/samples/inits.json
+random
+  seed = 58276
+output
+  file = /home/georg/git/maudy/tests/data/methionine_maud_output/maud_output_sim-methionine_cycle_6-20241029104451/samples/model-20241029104454.csv
+  diagnostic_file =  (Default)
+  refresh = 100 (Default)
+  sig_figs = -1 (Default)
+  profile_file = profile.csv (Default)
+  save_cmdstan_config = 0 (Default)
+num_threads = 1 (Default)
+
+Iteration: 1 / 1 [100%]  (Sampling)
+
+ Elapsed Time: 0 seconds (Warm-up)
+               0.019 seconds (Sampling)
+               0.019 seconds (Total)
+
