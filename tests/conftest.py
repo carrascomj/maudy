@@ -161,6 +161,8 @@ def methionine_allostery(idata_methionine: az.InferenceData) -> tuple[pd.DataFra
         .to_series()
         .unstack()
         .T)
+    km = idata_methionine.posterior["km"].mean(dim=["chain", "draw"]).to_series().T
+    ki = idata_methionine.posterior["ki"].mean(dim=["chain", "draw"]).to_series().T
     fer = idata_methionine.posterior["free_enzyme_ratio_train"].mean(dim=["chain", "draw"]).to_series().unstack()
     expected_allostery = (idata_methionine.posterior["allostery_train"]
         .mean(dim=["chain", "draw"])
@@ -178,5 +180,5 @@ def methionine_allostery(idata_methionine: az.InferenceData) -> tuple[pd.DataFra
         .mean(dim=["chain", "draw"])
         .to_series()
     )
-    return conc, fer, tc, dc, expected_allostery
+    return conc, km, ki, fer, tc, dc, expected_allostery
 

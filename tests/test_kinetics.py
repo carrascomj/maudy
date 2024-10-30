@@ -1,9 +1,11 @@
 """Check kinetic parity with Maud."""
 
-from maud.loading_maud_inputs import MaudInput
+from typing import Optional
+
 import torch
+from maud.loading_maud_inputs import MaudInput
 from maudy.model import Maudy
-from maudy.kinetics import get_allostery
+from maudy.kinetics import get_allostery, get_competitive_inhibition_denom, get_free_enzyme_ratio_denom
 
 
 def format_tensor(tensor: torch.Tensor) -> str:
@@ -28,9 +30,54 @@ def format_tensor(tensor: torch.Tensor) -> str:
     return string_tensor
 
 
+def assert_eq_tensors(computed: torch.Tensor, expected: torch.Tensor, term: str, header: Optional[list[str]] = None):
+    header = [] if header is None else header
+    result = (computed - expected).abs()
+    assert (result <= 1e-5).all(), (
+        f"{term} terms do not correspond to the expected ones (max(ε)={result.max()}).\n"
+        f"{term}\n{header}\n{format_tensor(computed)}"
+        f"\nExpected\n{format_tensor(expected)}\n"
+        f"Diff\n{format_tensor(result)}"
+    )
+
+
+def test_FER_parity_with_methionine_model(methionine_model: MaudInput, methionine_allostery):
+    model = Maudy(methionine_model)
+    conc, km, ki, expected_free_enzyme_ratio = methionine_allostery[0:4]
+    # check that the km/ki from Maud are aligned as expected in Maudy
+    assert (km.index == model.maud_params.km.prior.ids[0]).all()
+    assert (ki.index == model.maud_params.ki.prior.ids[0]).all()
+    kcat_pars = model.maud_params.kcat.prior
+    enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
+    enzymes = [x.split("_")[0] for x in kcat_pars.ids[0]]
+    edge_ids = [f"{e}_{r}" for e, r in zip(enzymes, enzymatic_reactions)]
+    mics = [met.id for met in model.kinetic_model.mics]
+    conc = torch.FloatTensor(conc.loc[mics, :].to_numpy().T)
+    free_enzyme_ratio_denom =  get_free_enzyme_ratio_denom(
+        conc,
+        torch.FloatTensor(km),
+        model.sub_conc_idx,
+        model.sub_km_idx,
+        model.prod_conc_idx,
+        model.prod_km_idx,
+        model.substrate_S,
+        model.product_S,
+        model.irreversible,
+    )
+    ci_denom = get_competitive_inhibition_denom(
+        conc,
+        torch.FloatTensor(ki),
+        model.ki_conc_idx,
+        model.ki_idx,
+    )
+    fer = 1 / (ci_denom + free_enzyme_ratio_denom)
+    expected_free_enzyme_ratio = torch.Tensor(expected_free_enzyme_ratio.loc[:, edge_ids].to_numpy())
+    assert_eq_tensors(fer, expected_free_enzyme_ratio, "FER", edge_ids)
+
+
 def test_allostery_parity_with_methionine_maud_model(methionine_model: MaudInput, methionine_allostery):
     model = Maudy(methionine_model)
-    conc, free_enzyme_ratio, tc, dc, expected_allostery = methionine_allostery
+    conc, _, _, free_enzyme_ratio, tc, dc, expected_allostery = methionine_allostery
     # we need to sort conc and FER as they are expected in Maudy
     kcat_pars = model.maud_params.kcat.prior
     mics = [met.id for met in model.kinetic_model.mics]
@@ -67,11 +114,5 @@ def test_allostery_parity_with_methionine_maud_model(methionine_model: MaudInput
         model.subunits,
     )
     expected_allostery = torch.Tensor(expected_allostery.loc[edge_ids, :].to_numpy().T)
-    result = (expected_allostery - allostery).abs()
-    assert (result <= 1e-5).all(), (
-        f"Allosteric terms do not correspond to the expected ones (max(ε)={result.max()}).\n"
-        f"Allostery\n{edge_ids}\n{format_tensor(allostery)}"
-        f"\nExpected\n{format_tensor(expected_allostery)}\n"
-        f"Diff\n{format_tensor(result)}"
-    )
+    assert_eq_tensors(allostery, expected_allostery, "Allostery", edge_ids)
 
