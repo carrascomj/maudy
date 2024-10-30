@@ -4,12 +4,15 @@ from typing import Optional
 
 import torch
 from maud.loading_maud_inputs import MaudInput
+from maudy.constants import DGF_WATER, RT
 from maudy.model import Maudy
-from maudy.kinetics import get_allostery, get_competitive_inhibition_denom, get_free_enzyme_ratio_denom, get_vmax
+from maudy.kinetics import get_allostery, get_competitive_inhibition_denom, get_dgr, get_free_enzyme_ratio_denom, get_vmax, get_reversibility
 
 
 def format_tensor(tensor: torch.Tensor) -> str:
     """Print tensor for debugging when test fails."""
+    if len(tensor.shape) < 2:
+        return tensor.cpu().numpy().round(4).tolist().__str__()
     tensor = tensor.float()
     tensor_list = tensor.tolist()
     formatted_tensor = [[f"{element:.4f}" for element in row] for row in tensor_list]
@@ -30,10 +33,10 @@ def format_tensor(tensor: torch.Tensor) -> str:
     return string_tensor
 
 
-def assert_eq_tensors(computed: torch.Tensor, expected: torch.Tensor, term: str, header: Optional[list[str]] = None):
+def assert_eq_tensors(computed: torch.Tensor, expected: torch.Tensor, term: str, header: Optional[list[str]] = None, tolerance: float = 1e-5):
     header = [] if header is None else header
     result = (computed - expected).abs()
-    assert (result <= 1e-5).all(), (
+    assert (result <= tolerance).all(), (
         f"{term} terms do not correspond to the expected ones (max(ε)={result.max()}).\n"
         f"{term}\n{header}\n{format_tensor(computed)}"
         f"\nExpected\n{format_tensor(expected)}\n"
@@ -127,3 +130,30 @@ def test_allostery_parity_with_methionine_maud_model(methionine_model: MaudInput
     expected_allostery = torch.Tensor(expected_allostery.loc[edge_ids, :].to_numpy().T)
     assert_eq_tensors(allostery, expected_allostery, "Allostery", edge_ids)
 
+
+def test_reversibility_parity_with_maud(methionine_model: MaudInput, methionine_allostery, methionine_reversibility):
+    model = Maudy(methionine_model)
+    conc = methionine_allostery[0]
+    dgf, expected_dgr, expected_reversibility, psi = methionine_reversibility
+    kcat_pars = model.maud_params.kcat.prior
+    enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
+    dgr = get_dgr(
+        model.S_enz,
+        torch.Tensor(dgf)[model.met_to_mic],
+        model.water_stoichiometry,
+        model.fdx_stoichiometry,
+        torch.Tensor([0.0]),
+    )
+    # maudy always assumes 310.15K, so the dgf of water and RT must be changed accordingly
+    water_shift = torch.zeros_like(dgr)
+    water_shift = model.water_stoichiometry * -(150.9 + DGF_WATER)
+    dgr = dgr + water_shift
+    # remove first element (drain) and take only one of the broadcasted condititions
+    expected_dgr = torch.Tensor(expected_dgr.iloc[1:, 0])
+    assert_eq_tensors(dgr, expected_dgr, "dG_r", enzymatic_reactions, tolerance=1e-4)
+    mics = [met.id for met in model.kinetic_model.mics]
+    conc = torch.FloatTensor(conc.loc[mics, :].to_numpy().T)
+    rev = get_reversibility(
+        model.S_enz_thermo, dgr, conc, model.transported_charge, torch.Tensor([-0.11]), model.irreversible, RT / 310.15 * 298.15
+    )
+    assert_eq_tensors(rev, torch.Tensor(expected_reversibility.iloc[1:, :].to_numpy().T), "Reversibility", enzymatic_reactions)

@@ -194,3 +194,34 @@ def methionine_allostery(idata_methionine: az.InferenceData) -> tuple[pd.DataFra
     )
     return conc, km, ki, fer, tc, dc, expected_allostery, kcat, enzyme_conc
 
+@fixture
+def methionine_reversibility(idata_methionine: az.InferenceData) -> tuple[pd.DataFrame, ...]:
+    dgf = (
+        idata_methionine.posterior["dgf"]
+        .mean(dim=["chain", "draw"])
+        .to_series()
+        .T
+    )
+    dgr = (
+        idata_methionine.posterior["dgr_train"]
+        .mean(dim=["chain", "draw"])
+        .to_series()
+        .unstack()
+        .T
+    )
+    reversibility = (
+        idata_methionine.posterior["reversibility_train"]
+        .mean(dim=["chain", "draw"])
+        .to_series()
+        .unstack()
+        .T
+    )
+    psi = (
+        idata_methionine.posterior["psi_train"]
+        .mean(dim=["chain", "draw"])
+        .to_series()
+        .T
+    )
+
+    return dgf, dgr, reversibility, psi
+

@@ -85,7 +85,7 @@ def get_competitive_inhibition_denom(
 
 def get_reversibility(
     S: Matrix, dgr: Vector, conc: Vector, trans_charge: Vector, psi: torch.Tensor,
-    irr: Vector,
+    irr: Vector, rt: float = RT
 ) -> Vector:
     """Add the membrane potential to dgr and compute reversibility."""
     rev = torch.ones((conc.shape[0], dgr.shape[0]), device=dgr.device)
@@ -93,9 +93,9 @@ def get_reversibility(
         (
             dgr[irr].unsqueeze(0)
             + trans_charge[irr].unsqueeze(0) * psi * F
-            + RT * (conc.log() @ S)[:, irr]
+            + rt * (conc.log() @ S)[:, irr]
         )
-        / RT
+        / rt
     )
     return rev
 
