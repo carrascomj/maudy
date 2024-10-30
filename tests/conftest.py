@@ -180,6 +180,13 @@ def methionine_allostery(idata_methionine: az.InferenceData) -> tuple[pd.DataFra
         .mean(dim=["chain", "draw"])
         .to_series()
     )
+    saturation = (
+        idata_methionine.posterior["saturation_train"]
+        .mean(dim=["chain", "draw"])
+        .to_series()
+        .unstack()
+        .T
+    )
     kcat = (
         idata_methionine.posterior["kcat"]
         .mean(dim=["chain", "draw"])
@@ -192,7 +199,7 @@ def methionine_allostery(idata_methionine: az.InferenceData) -> tuple[pd.DataFra
         .unstack()
         .T
     )
-    return conc, km, ki, fer, tc, dc, expected_allostery, kcat, enzyme_conc
+    return conc, km, ki, fer, tc, dc, expected_allostery, saturation, kcat, enzyme_conc
 
 @fixture
 def methionine_reversibility(idata_methionine: az.InferenceData) -> tuple[pd.DataFrame, ...]:

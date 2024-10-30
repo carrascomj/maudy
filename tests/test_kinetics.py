@@ -6,7 +6,7 @@ import torch
 from maud.loading_maud_inputs import MaudInput
 from maudy.constants import DGF_WATER, RT
 from maudy.model import Maudy
-from maudy.kinetics import get_allostery, get_competitive_inhibition_denom, get_dgr, get_free_enzyme_ratio_denom, get_vmax, get_reversibility
+from maudy.kinetics import get_allostery, get_competitive_inhibition_denom, get_dgr, get_free_enzyme_ratio_denom, get_saturation, get_vmax, get_reversibility
 
 
 def format_tensor(tensor: torch.Tensor) -> str:
@@ -91,7 +91,7 @@ def test_FER_parity_with_methionine_model(methionine_model: MaudInput, methionin
 
 def test_allostery_parity_with_methionine_maud_model(methionine_model: MaudInput, methionine_allostery):
     model = Maudy(methionine_model)
-    conc, _, _, free_enzyme_ratio, tc, dc, expected_allostery, _, _ = methionine_allostery
+    conc, _, _, free_enzyme_ratio, tc, dc, expected_allostery, _, _, _ = methionine_allostery
     # we need to sort conc and FER as they are expected in Maudy
     kcat_pars = model.maud_params.kcat.prior
     mics = [met.id for met in model.kinetic_model.mics]
@@ -157,3 +157,38 @@ def test_reversibility_parity_with_maud(methionine_model: MaudInput, methionine_
         model.S_enz_thermo, dgr, conc, model.transported_charge, torch.Tensor([-0.11]), model.irreversible, RT / 310.15 * 298.15
     )
     assert_eq_tensors(rev, torch.Tensor(expected_reversibility.iloc[1:, :].to_numpy().T), "Reversibility", enzymatic_reactions)
+
+
+def test_saturation_parity_with_maud(methionine_model: MaudInput, methionine_allostery):
+    model = Maudy(methionine_model)
+    conc, km, ki, free_enzyme_ratio, _, _, _, expected_saturation, _, _ = methionine_allostery
+    kcat_pars = model.maud_params.kcat.prior
+    mics = [met.id for met in model.kinetic_model.mics]
+    enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
+    enzymes = [x.split("_")[0] for x in kcat_pars.ids[0]]
+    edge_ids = [f"{e}_{r}" for e, r in zip(enzymes, enzymatic_reactions)]
+    conc = torch.FloatTensor(conc.loc[mics, :].to_numpy().T)
+    free_enzyme_ratio = torch.Tensor(free_enzyme_ratio.loc[:, edge_ids].to_numpy())
+    free_enzyme_ratio_denom =  get_free_enzyme_ratio_denom(
+        conc,
+        torch.FloatTensor(km),
+        model.sub_conc_idx,
+        model.sub_km_idx,
+        model.prod_conc_idx,
+        model.prod_km_idx,
+        model.substrate_S,
+        model.product_S,
+        model.irreversible,
+    )
+    ci_denom = get_competitive_inhibition_denom(
+        conc,
+        torch.FloatTensor(ki),
+        model.ki_conc_idx,
+        model.ki_idx,
+    )
+    fer = 1 / (ci_denom + free_enzyme_ratio_denom)
+    saturation = get_saturation(
+        conc, torch.FloatTensor(km), fer, model.sub_conc_idx, model.sub_km_idx
+    )
+    expected_saturation = torch.Tensor(expected_saturation.loc[edge_ids, :].to_numpy().T)
+    assert_eq_tensors(saturation, expected_saturation, "Saturation", edge_ids)
