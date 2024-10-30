@@ -75,7 +75,7 @@ def get_competitive_inhibition_denom(
 ):
     sub_contr = torch.stack(
         [
-            (1 + (conc[:, conc_idx] / ki[..., ki_idx])).sum(dim=-1)
+            (conc[:, conc_idx] / ki[..., ki_idx]).sum(dim=-1)
             for conc_idx, ki_idx in zip(ci_conc_idx, ki_idx)
         ],
         dim=1,
