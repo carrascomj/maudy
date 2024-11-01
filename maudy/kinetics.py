@@ -15,10 +15,11 @@ ReacIndex = Sequence[torch.LongTensor]
 
 
 def get_dgr(
-    S: Matrix, dgf: Vector, water_S: Vector, fdx_S: Vector, fdx_contr: torch.FloatTensor
+    S: Matrix, dgf: Vector, water_S: Vector, fdx_S: Vector, fdx_contr: torch.FloatTensor,
+    dgf_water: float = DGF_WATER
 ) -> Vector:
     """Compute the experiment-agnostic dGr (no membrane potential)."""
-    return S.T @ dgf + water_S * DGF_WATER + fdx_S * fdx_contr
+    return S.T @ dgf + water_S * dgf_water + fdx_S * fdx_contr
 
 
 def get_saturation(

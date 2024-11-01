@@ -1,6 +1,7 @@
 from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
+from warnings import warn
 
 import pandas as pd
 import pyro
@@ -32,6 +33,11 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
+def dgf_water_from_temperature(temp: float) -> float:
+    """Solve ΔH - T ΔS approximately for verifying inputs."""
+    return 204.4382 - (temp * 1.1918)
+
+
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, normalize: bool = False, quench: bool = False):
         """Initialize the priors of the model.
@@ -57,6 +63,15 @@ class Maudy(nn.Module):
         super().__init__()
         self.kinetic_model = maud_input.kinetic_model
         self.maud_params = maud_input.parameters
+        self.temperature = maud_input._maudy_config.temperature
+        self.dgf_water = maud_input._maudy_config.dgf_water
+        self.rt = self.temperature * 0.008314
+        if abs(abs(dgf_water_from_temperature(self.temperature)) - abs(self.dgf_water)) > 2:
+            print("hello")
+            warn(f"Input T {self.temperature} and ΔG_water {self.dgf_water} do "
+                 "not seem to match the approximate relationship. If T is "
+                 "supplied, ΔG_water must also be specified!")
+
         # 1. kcats
         kcat_pars = self.maud_params.kcat.prior
         # we have to this splits because this maud is wrong...
@@ -529,6 +544,7 @@ class Maudy(nn.Module):
                 self.water_stoichiometry,
                 self.fdx_stoichiometry,
                 fdx_contr,
+                self.dgf_water,
             ),
         )
         km = pyro.sample("km", dist.LogNormal(self.km_loc, self.km_scale).to_event(1))
@@ -628,7 +644,8 @@ class Maudy(nn.Module):
             rev = pyro.deterministic(
                 "rev",
                 get_reversibility(
-                    self.S_enz_thermo, dgr, conc, self.transported_charge, psi, self.irreversible
+                    self.S_enz_thermo, dgr, conc, self.transported_charge, psi, self.irreversible,
+                    self.rt
                 ),
                 event_dim=1,
             )

@@ -2,6 +2,7 @@ import toml
 from pathlib import Path
 from typing import Optional
 
+from .constants import T, DGF_WATER
 from pydantic import BaseModel, Field
 
 
@@ -16,6 +17,8 @@ class MaudyConfig(BaseModel):
     neural_network: NeuralNetworkConfig = Field(default_factory=NeuralNetworkConfig)
     optimize_unbalanced_metabolites: list[str] = []
     quenching_groups: list[list[str]] = []
+    temperature: float = T
+    dgf_water: float = DGF_WATER
 
 
 def load_maudy_config(maud_dir: Path) -> MaudyConfig:
