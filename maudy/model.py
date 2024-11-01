@@ -2,6 +2,7 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
 from warnings import warn
+from maudy.quench_preprocessing import extract_conserved_moiety_matrix
 
 import pandas as pd
 import pyro
@@ -462,6 +463,8 @@ class Maudy(nn.Module):
         met_dim = len(self.balanced_mics_idx)
         # users-defined groups that are quenched with opposing parameters
         quenching_groups = maud_input._maudy_config.quenching_groups
+        quenching_groups = quenching_groups if quenching_groups else self.group_quenching_by_moieties()
+        self.quenching_groups_named = quenching_groups
         self.quench_groups = (
             [
                 torch.LongTensor([bal_mics.index(met) for met in q_group])
@@ -487,6 +490,18 @@ class Maudy(nn.Module):
         )
         )
 
+    def group_quenching_by_moieties(self) -> list[list[str]]:
+        """Find metabolite groups sharing a conserved moiety."""
+        mics = [met.id for met in self.kinetic_model.mics]
+        st = self.S[self.balanced_mics_idx, :].cpu().numpy()
+        conserved = extract_conserved_moiety_matrix(st, [mics[i] for i in self.balanced_mics_idx], 1e-7)
+        if conserved is None:
+            return []
+        return [
+            conserved.loc[conserved.loc[:, col] != 0, col].index.tolist()
+            for col in conserved.columns
+        ]
+
     def correct_quenching(self, ln_bal_conc: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
@@ -497,7 +512,7 @@ class Maudy(nn.Module):
             sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
             exp_norm_q = nn.functional.softmax(quench_correction[:, group_idx].exp())
             quench_correction[:, group_idx] = (ln_bal_conc[:, group_idx] -
-                (sum_conc * exp_norm_q).log())
+                (sum_conc.unsqueeze(-1) * exp_norm_q).log())
         return quench_correction
 
     def cuda(self):

@@ -15,6 +15,8 @@ arviz==0.18.0
     # via maud-metabolic-models
 asttokens==2.4.1
     # via stack-data
+clarabel==0.9.0
+    # via cvxpy
 click==8.1.7
     # via maud-metabolic-models
     # via typer-slim
@@ -24,6 +26,8 @@ comm==0.2.2
     # via ipykernel
 contourpy==1.2.1
     # via matplotlib
+cvxpy==1.5.3
+    # via maudy
 cycler==0.12.1
     # via matplotlib
 debugpy==1.8.2
@@ -34,6 +38,8 @@ depinfo==1.7.0
     # via maud-metabolic-models
 dm-tree==0.1.8
     # via arviz
+ecos==2.0.14
+    # via cvxpy
 executing==2.0.1
     # via stack-data
 filelock==3.15.4
@@ -85,18 +91,24 @@ networkx==3.3
     # via torch
 numpy==1.26.4
     # via arviz
+    # via clarabel
     # via cmdstanpy
     # via contourpy
+    # via cvxpy
+    # via ecos
     # via h5py
     # via matplotlib
     # via maud-metabolic-models
     # via mizani
     # via opt-einsum
+    # via osqp
     # via pandas
     # via patsy
     # via plotnine
     # via pyro-ppl
+    # via qdldl
     # via scipy
+    # via scs
     # via stanio
     # via statsmodels
     # via xarray
@@ -131,6 +143,8 @@ nvidia-nvtx-cu12==12.1.105
     # via torch
 opt-einsum==3.3.0
     # via pyro-ppl
+osqp==0.6.7.post3
+    # via cvxpy
 packaging==24.1
     # via arviz
     # via h5netcdf
@@ -192,14 +206,24 @@ pytz==2024.1
 pyzmq==26.0.3
     # via ipykernel
     # via jupyter-client
+qdldl==0.1.7.post4
+    # via osqp
 ruff==0.4.10
 scipy==1.14.0
     # via arviz
+    # via clarabel
+    # via cvxpy
+    # via ecos
     # via maud-metabolic-models
     # via mizani
+    # via osqp
     # via plotnine
+    # via qdldl
+    # via scs
     # via statsmodels
     # via xarray-einstats
+scs==3.2.7
+    # via cvxpy
 setuptools==70.1.1
     # via arviz
 six==1.16.0
