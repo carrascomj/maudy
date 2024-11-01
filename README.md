@@ -120,8 +120,9 @@ km_dims = [512, 1024, 512, 512, 256]
 
 As aforementioned, a `--quench` parameter can be supplied to the `maudy
 sample` command. If supplied, a quenching correctiong will applied to the
-balanced concentrations. This quenching correction is strictly negative
-(hypothesis: there is always some degree of extraction loss). The measurement
+balanced concentrations. This quenching correction is defined in the real line,
+where conserved moieities (specified in the `maudy_config` or automatically determined)
+are forced to preserve the concentration after quenching. The measurement
 model of the fluxes and the steady-state deviation is computed using the
 balanced concentrations **without** quenching. The quenched-corrected
 balanced concentrations are used to compute only the measurement model of the
