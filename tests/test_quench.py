@@ -29,7 +29,8 @@ def test_sample_with_computed_correction_groups(ci_aord_model: MaudInput):
     ), f"Computed quenching groups ({model.quenching_groups_named}) do not match the expected ones."
 
 
-def test_sample_without_quenching_correction_groups(maud_input: MaudInput):
+def test_toy_models_with_computed_quenching_correction_groups(maud_input: MaudInput):
     maud_input = deepcopy(maud_input)
     model, _ = train(maud_input, 4, True, True, True, True, 10, False)
-    assert len(model.quench_groups) == 0
+    # for all toy models, we expect one quenching correction group
+    assert len(model.quench_groups) == 1

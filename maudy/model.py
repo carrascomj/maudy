@@ -68,7 +68,6 @@ class Maudy(nn.Module):
         self.dgf_water = maud_input._maudy_config.dgf_water
         self.rt = self.temperature * 0.008314
         if abs(abs(dgf_water_from_temperature(self.temperature)) - abs(self.dgf_water)) > 2:
-            print("hello")
             warn(f"Input T {self.temperature} and ΔG_water {self.dgf_water} do "
                  "not seem to match the approximate relationship. If T is "
                  "supplied, ΔG_water must also be specified!")
@@ -473,6 +472,8 @@ class Maudy(nn.Module):
             if quenching_groups and quench
             else []
         )
+        # the input of the quenching neural network is balanced concentrations and vmax
+        quench_input = met_dim + len(enzymatic_reactions)
         self.quench = (
         (
             lambda _: torch.zeros(
@@ -484,7 +485,7 @@ class Maudy(nn.Module):
             *[
                 nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
                 for in_dim, out_dim in zip(
-                    [met_dim] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
+                    [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
                 )
             ], nn.Linear(met_dim, met_dim)
         )
@@ -493,26 +494,29 @@ class Maudy(nn.Module):
     def group_quenching_by_moieties(self) -> list[list[str]]:
         """Find metabolite groups sharing a conserved moiety."""
         mics = [met.id for met in self.kinetic_model.mics]
-        st = self.S[self.balanced_mics_idx, :].cpu().numpy()
-        conserved = extract_conserved_moiety_matrix(st, [mics[i] for i in self.balanced_mics_idx], 1e-7)
+        st = self.S.cpu().numpy()
+        conserved = extract_conserved_moiety_matrix(st, mics, 1e-7)
         if conserved is None:
             return []
+        # filter out unbalanced metabolites
+        conserved = conserved.loc[[mics[i] for i in self.balanced_mics_idx], :]
+        # keep only moieity groups with 2 or more metabolites
+        conserved = conserved.loc[:, (conserved.abs() > 1e-7).sum(axis=0) >= 2]
         return [
             conserved.loc[conserved.loc[:, col] != 0, col].index.tolist()
             for col in conserved.columns
         ]
 
-    def correct_quenching(self, ln_bal_conc: torch.Tensor):
+    def correct_quenching(self, ln_bal_conc: torch.Tensor, vmax: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.quenched_groups`.
         """
-        quench_correction = self.quench(ln_bal_conc)
+        quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1))
         for group_idx in self.quench_groups:
-            sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
-            exp_norm_q = nn.functional.softmax(quench_correction[:, group_idx].exp())
-            quench_correction[:, group_idx] = (ln_bal_conc[:, group_idx] -
-                (sum_conc.unsqueeze(-1) * exp_norm_q).log())
+            sum_conc = ln_bal_conc[:, group_idx].sum(dim=-1).exp()
+            proportions = nn.functional.softmax((ln_bal_conc[:, group_idx] - quench_correction[:, group_idx]).exp(), dim=-1)
+            quench_correction[:, group_idx] = (ln_bal_conc[:, group_idx] - (sum_conc.unsqueeze(-1) * proportions).log())
         return quench_correction
 
     def cuda(self):
@@ -711,7 +715,7 @@ class Maudy(nn.Module):
                         conc,
                         self.sub_conc_drain_idx,
                         self.prod_conc_drain_idx,
-                        self.substrate_drain_S,
+                    self.substrate_drain_S,
                         self.product_drain_S,
                         1e-9,
                     ),
@@ -731,7 +735,9 @@ class Maudy(nn.Module):
             )
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-            quench_correction = pyro.deterministic("quench_correction", self.correct_quenching(ln_bal_conc))
+
+            quench_correction = pyro.deterministic("quench_correction", 
+                                                   self.correct_quenching(ln_bal_conc, vmax))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
