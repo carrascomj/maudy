@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+import torch
+import pytest
 from maud.data_model.maud_input import MaudInput
 from maudy.train import train
 
@@ -29,8 +31,16 @@ def test_sample_with_computed_correction_groups(ci_aord_model: MaudInput):
     ), f"Computed quenching groups ({model.quenching_groups_named}) do not match the expected ones."
 
 
-def test_toy_models_with_computed_quenching_correction_groups(maud_input: MaudInput):
-    maud_input = deepcopy(maud_input)
-    model, _ = train(maud_input, 4, True, True, True, True, 10, False)
+@pytest.mark.parametrize("epochs", range(2,6))
+def test_toy_models_with_computed_quenching_correction_do_not_raise_nan(maud_input: MaudInput, epochs: int):
+    with torch.autograd.detect_anomaly(True):
+        model, _ = train(maud_input, epochs, True, True, True, True, 10, True)
+    # for all toy models, we expect one quenching correction group
+    assert len(model.quench_groups) == 1
+
+
+def test_ci_aord_do_not_raise_nan(maud_input: MaudInput):
+    with torch.autograd.detect_anomaly(True):
+        model, _ = train(maud_input, 4, True, True, True, True, 10, True)
     # for all toy models, we expect one quenching correction group
     assert len(model.quench_groups) == 1
