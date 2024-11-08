@@ -9,6 +9,7 @@ import pyro
 import pyro.distributions as dist
 import torch
 import torch.nn as nn
+from torch.nn.functional import softmax
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
@@ -514,9 +515,10 @@ class Maudy(nn.Module):
         """
         quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1))
         for group_idx in self.quench_groups:
-            sum_conc = ln_bal_conc[:, group_idx].sum(dim=-1).exp()
-            proportions = nn.functional.softmax((ln_bal_conc[:, group_idx] - quench_correction[:, group_idx]).exp(), dim=-1)
-            quench_correction[:, group_idx] = (ln_bal_conc[:, group_idx] - (sum_conc.unsqueeze(-1) * proportions).log())
+            group = ln_bal_conc[:, group_idx]
+            sum_conc = group.exp().sum(dim=-1)
+            proportions = softmax((group - quench_correction[:, group_idx]).exp(), dim=-1)
+            quench_correction[:, group_idx] = (group - (sum_conc.unsqueeze(-1) * proportions).log())
         return quench_correction
 
     def cuda(self):
