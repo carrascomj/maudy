@@ -515,8 +515,8 @@ class Maudy(nn.Module):
 
             sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
             sum_conc_q = (ln_bal_conc[:, indices_to_subtract] - out[:, indices_to_subtract]).exp().sum(dim=-1)
-            remaining_conc = ln_bal_conc[:, group_idx[-1]].exp() - (sum_conc - sum_conc_q)
-            out[:, group_idx[-1]] = remaining_conc.clamp(1e-11).log()
+            remaining_conc = ln_bal_conc[:, group_idx[-1]].exp() - (sum_conc - sum_conc_q).clamp(1e-11)
+            out[:, group_idx[-1]] = remaining_conc.clamp(1e-14).log()
         # fill in those that do not participate in quench groups
         out[:, self.not_quench_groups] = quench_correction[:, q_index:(q_index + len(self.not_quench_groups))]
         return out
