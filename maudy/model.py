@@ -8,11 +8,10 @@ import pyro
 import pyro.distributions as dist
 import torch
 import torch.nn as nn
-from torch.nn.functional import softmax
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
-from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -463,8 +462,10 @@ class Maudy(nn.Module):
             if quenching_groups and quench
             else []
         )
+        self.not_quench_groups = torch.LongTensor([i for i in range(len(bal_mics)) if i not in (torch.cat(self.quench_groups) if self.quench_groups else [])])
         # the input of the quenching neural network is balanced concentrations and vmax
         quench_input = met_dim + len(enzymatic_reactions)
+        quench_output = met_dim - len(self.quench_groups)
         self.quench = (
         (
             lambda _: torch.zeros(
@@ -474,11 +475,11 @@ class Maudy(nn.Module):
         if not quench
         else nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
+                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
                 for in_dim, out_dim in zip(
-                    [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
+                    [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [quench_output]
                 )
-            ], nn.Linear(met_dim, met_dim)
+            ], nn.Linear(quench_output, quench_output)
         )
         )
 
@@ -504,12 +505,21 @@ class Maudy(nn.Module):
         Mass conservation is forced through `self.quenched_groups`.
         """
         quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1))
+        out = torch.zeros_like(ln_bal_conc)
+        q_index = 0
         for group_idx in self.quench_groups:
-            group = ln_bal_conc[:, group_idx]
-            sum_conc = group.exp().sum(dim=-1)
-            proportions = softmax((group - quench_correction[:, group_idx]).exp(), dim=-1)
-            quench_correction[:, group_idx] = (group - (sum_conc.unsqueeze(-1) * proportions).log())
-        return quench_correction
+            indices_to_subtract = group_idx[:-1]
+            num_indices = len(indices_to_subtract)
+            out[:, indices_to_subtract] = quench_correction[:, q_index:q_index + num_indices]
+            q_index += num_indices
+
+            sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
+            sum_conc_q = (ln_bal_conc[:, indices_to_subtract] - out[:, indices_to_subtract]).exp().sum(dim=-1)
+            remaining_conc = ln_bal_conc[:, group_idx[-1]].exp() - (sum_conc - sum_conc_q)
+            out[:, group_idx[-1]] = remaining_conc.clamp(1e-11).log()
+        # fill in those that do not participate in quench groups
+        out[:, self.not_quench_groups] = quench_correction[:, q_index:(q_index + len(self.not_quench_groups))]
+        return out
 
     def cuda(self):
         super().cuda()
