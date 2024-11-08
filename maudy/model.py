@@ -1,7 +1,6 @@
 from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
-from warnings import warn
 from maudy.quench_preprocessing import extract_conserved_moiety_matrix
 
 import pandas as pd
@@ -35,11 +34,6 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
-def dgf_water_from_temperature(temp: float) -> float:
-    """Solve ΔH - T ΔS approximately for verifying inputs."""
-    return 204.4382 - (temp * 1.1918)
-
-
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, normalize: bool = False, quench: bool = False):
         """Initialize the priors of the model.
@@ -68,10 +62,6 @@ class Maudy(nn.Module):
         self.temperature = maud_input._maudy_config.temperature
         self.dgf_water = maud_input._maudy_config.dgf_water
         self.rt = self.temperature * 0.008314
-        if abs(abs(dgf_water_from_temperature(self.temperature)) - abs(self.dgf_water)) > 2:
-            warn(f"Input T {self.temperature} and ΔG_water {self.dgf_water} do "
-                 "not seem to match the approximate relationship. If T is "
-                 "supplied, ΔG_water must also be specified!")
 
         # 1. kcats
         kcat_pars = self.maud_params.kcat.prior
