@@ -466,6 +466,7 @@ class Maudy(nn.Module):
         # the input of the quenching neural network is balanced concentrations and vmax
         quench_input = met_dim + len(enzymatic_reactions)
         quench_output = met_dim - len(self.quench_groups)
+        self.quench_eff_loc = torch.FloatTensor([1.0]).expand(quench_output)
         self.quench = (
         (
             lambda _: torch.zeros(
@@ -499,13 +500,15 @@ class Maudy(nn.Module):
             for col in conserved.columns
         ]
 
-    def correct_quenching(self, ln_bal_conc: torch.Tensor, vmax: torch.Tensor):
+    def correct_quenching(self, ln_bal_conc: torch.Tensor, vmax: torch.Tensor, quench_efficiency: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.quenched_groups`.
         """
-        quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1))
         out = torch.zeros_like(ln_bal_conc)
+        if self.quench:
+            return out
+        quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1)) * quench_efficiency
         q_index = 0
         for group_idx in self.quench_groups:
             indices_to_subtract = group_idx[:-1]
@@ -737,9 +740,11 @@ class Maudy(nn.Module):
             )
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-
+            # prior to make quench correction 0 by default
+            quench_eff = pyro.sample("quench_efficiency", dist.Beta(self.quench_eff_loc * 0.2, self.quench_eff_loc).to_event()) if self.quench else self.float_tensor(0)
+            
             quench_correction = pyro.deterministic("quench_correction", 
-                                                   self.correct_quenching(ln_bal_conc, vmax))
+                                                   self.correct_quenching(ln_bal_conc, vmax, quench_eff))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
@@ -829,6 +834,12 @@ class Maudy(nn.Module):
             dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
+        if self.quench:
+            # prior to make quench correction ~0 by default
+            quench_eff_alpha = pyro.param("alpha", lambda: torch.ones_like(self.quench_eff_loc) * 0.2)
+            quench_eff_beta = pyro.param("beta", lambda: torch.ones_like(self.quench_eff_loc) * 0.2)
+            pyro.sample("quench_efficiency", dist.Beta(quench_eff_alpha, quench_eff_beta).to_event()) if self.quench else self.float_tensor(0)
+            
 
         psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))
         pyro.sample(
