@@ -506,7 +506,7 @@ class Maudy(nn.Module):
         Mass conservation is forced through `self.quenched_groups`.
         """
         out = torch.zeros_like(ln_bal_conc)
-        if self.quench:
+        if not self.quench:
             return out
         quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1)) * quench_efficiency
         q_index = 0
@@ -836,8 +836,8 @@ class Maudy(nn.Module):
             rest = torch.cat([rest, tc, dc])
         if self.quench:
             # prior to make quench correction ~0 by default
-            quench_eff_alpha = pyro.param("alpha", lambda: torch.ones_like(self.quench_eff_loc) * 0.2)
-            quench_eff_beta = pyro.param("beta", lambda: torch.ones_like(self.quench_eff_loc) * 0.2)
+            quench_eff_alpha = pyro.param("alpha", lambda: torch.ones_like(self.quench_eff_loc) * 0.2, Positive)
+            quench_eff_beta = pyro.param("beta", lambda: self.quench_eff_loc, Positive)
             pyro.sample("quench_efficiency", dist.Beta(quench_eff_alpha, quench_eff_beta).to_event()) if self.quench else self.float_tensor(0)
             
 
