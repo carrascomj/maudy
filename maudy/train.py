@@ -47,6 +47,7 @@ def train(
 
     # Instantiate instance of model/guide and various neural networks
     maudy = Maudy(maud_input, normalize, quench)
+    maudy.to_double()
     if torch.cuda.is_available():
         maudy.cuda()
     obs_flux, obs_conc = maudy.get_obs()

@@ -470,7 +470,8 @@ class Maudy(nn.Module):
         self.quench = (
         (
             lambda _: torch.zeros(
-                (len(self.experiments), met_dim), device=self.water_stoichiometry.device
+                (len(self.experiments), met_dim), device=self.water_stoichiometry.device,
+                dtype=self.water_stoichiometry.dtype
             )
         )
         if not quench
@@ -483,6 +484,7 @@ class Maudy(nn.Module):
             ], nn.Linear(quench_output, quench_output)
         )
         )
+        self.should_quench = quench
 
     def group_quenching_by_moieties(self) -> list[list[str]]:
         """Find metabolite groups sharing a conserved moiety."""
@@ -506,7 +508,7 @@ class Maudy(nn.Module):
         Mass conservation is forced through `self.quenched_groups`.
         """
         out = torch.zeros_like(ln_bal_conc)
-        if not self.quench:
+        if not self.should_quench:
             return out
         quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1)) * quench_efficiency
         q_index = 0
@@ -534,6 +536,27 @@ class Maudy(nn.Module):
                     x.cuda() if isinstance(x, torch.Tensor) else x
                     for x in self.__dict__[key]
                 ]
+
+    def to_double(self):
+        self.apply(lambda module: module._apply(lambda t: t.double() if t.dtype == torch.float32 else t))
+        def _convert_to_double(obj):
+            if isinstance(obj, torch.Tensor):
+                if obj.dtype == torch.float32:
+                    return obj.double()
+                else:
+                    return obj
+            elif isinstance(obj, list):
+                return [_convert_to_double(x) for x in obj]
+            elif isinstance(obj, tuple):
+                return tuple(_convert_to_double(x) for x in obj)
+            elif isinstance(obj, dict):
+                return {k: _convert_to_double(v) for k, v in obj.items()}
+            else:
+                return obj
+
+        for key in self.__dict__.keys():
+            attr = self.__dict__[key]
+            self.__dict__[key] = _convert_to_double(attr)
 
     def model(
         self,
@@ -741,7 +764,7 @@ class Maudy(nn.Module):
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             # prior to make quench correction 0 by default
-            quench_eff = pyro.sample("quench_efficiency", dist.Beta(self.quench_eff_loc * 0.2, self.quench_eff_loc).to_event()) if self.quench else self.float_tensor(0)
+            quench_eff = pyro.sample("quench_efficiency", dist.Beta(self.quench_eff_loc * 0.2, self.quench_eff_loc).to_event()) if self.should_quench else self.float_tensor(0)
             
             quench_correction = pyro.deterministic("quench_correction", 
                                                    self.correct_quenching(ln_bal_conc, vmax, quench_eff))
@@ -780,7 +803,7 @@ class Maudy(nn.Module):
                 # )
 
     def float_tensor(self, x) -> torch.Tensor:
-        return torch.tensor(x, device=self.water_stoichiometry.device)
+        return torch.tensor(x, device=self.water_stoichiometry.device, dtype=self.water_stoichiometry.dtype)
 
     # The guide specifies the variational distribution
     def guide(
@@ -834,11 +857,11 @@ class Maudy(nn.Module):
             dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
-        if self.quench:
+        if self.should_quench:
             # prior to make quench correction ~0 by default
             quench_eff_alpha = pyro.param("alpha", lambda: torch.ones_like(self.quench_eff_loc) * 0.2, Positive)
             quench_eff_beta = pyro.param("beta", lambda: self.quench_eff_loc, Positive)
-            pyro.sample("quench_efficiency", dist.Beta(quench_eff_alpha, quench_eff_beta).to_event()) if self.quench else self.float_tensor(0)
+            pyro.sample("quench_efficiency", dist.Beta(quench_eff_alpha, quench_eff_beta).to_event()) if self.should_quench else self.float_tensor(0)
             
 
         psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))

@@ -55,7 +55,7 @@ def get_free_enzyme_ratio_denom(
             ((1.0 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1) - 1.0
             if km_idx.size(0)
             else torch.zeros(
-                conc.shape[0], device=conc.device
+                conc.shape[0], device=conc.device, dtype=conc.dtype,
             )  # if irr: no km for prods: no prod_contr
             for conc_idx, km_idx, st in zip(prod_conc_idx, prod_km_idx, product_S)
         ],
@@ -89,7 +89,7 @@ def get_reversibility(
     irr: Vector, rt: float = RT
 ) -> Vector:
     """Add the membrane potential to dgr and compute reversibility."""
-    rev = torch.ones((conc.shape[0], dgr.shape[0]), device=dgr.device)
+    rev = torch.ones((conc.shape[0], dgr.shape[0]), device=dgr.device, dtype=dgr.dtype)
     rev[:, irr] = 1 - torch.exp(
         (
             dgr[irr].unsqueeze(0)
@@ -122,7 +122,7 @@ def get_kinetic_multi_drain(
                 ** st
             ).prod(dim=-1)
             if conc_idx.size(0)
-            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device)
+            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device, dtype=kcat_drain.dtype)
             for conc_idx, st in zip(sub_conc_idx, substrate_S)
         ],
         dim=1,
@@ -134,7 +134,7 @@ def get_kinetic_multi_drain(
                 ** st
             ).prod(dim=-1)
             if conc_idx.size(0)
-            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device)
+            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device, dtype=kcat_drain.dtype)
             for conc_idx, st in zip(prod_conc_idx, product_S)
         ],
         dim=1,
