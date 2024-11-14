@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import pyro
+import pyro.poutine as poutine
 import torch
-from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
+from pyro.infer import SVI, TraceGraph_ELBO, config_enumerate
 from pyro.optim.clipped_adam import ClippedAdam
 from pyro.optim import PyroOptim
 from tqdm import tqdm
@@ -19,6 +20,34 @@ from maud.data_model.maud_input import MaudInput
 
 from .io import load_maudy_config
 from .model import Maudy
+
+
+class RegularizedTraceGraphELBO(TraceGraph_ELBO):
+    """TraceGraph ELBO that promotes sparsity of `quench_correction`.
+
+
+    Applies the parente loss function if quenching is not simulated.
+    """
+    def __init__(self, lambda_reg=1.0, *args, **kwargs):
+        super(RegularizedTraceGraphELBO, self).__init__(*args, **kwargs)
+        self.lambda_reg = lambda_reg
+
+    def loss(self, model, guide, *args, **kwargs):
+        if not model.should_quench:
+            return super(RegularizedTraceGraphELBO, self).loss(model, guide, *args, **kwargs)
+        elbo = 0.0
+        regularization = 0.0
+
+        for model_trace, guide_trace in self._get_traces(model, guide, args, kwargs):
+            elbo_particle = model_trace.log_prob_sum() - guide_trace.log_prob_sum()
+            elbo += elbo_particle / float(self.num_particles)
+            quench_correction = model_trace.nodes["quench_correction"]["value"]
+            regularization += (
+                self.lambda_reg * torch.sum(quench_correction ** 2) / float(self.num_particles)
+            )
+
+        loss = -elbo + regularization
+        return loss
 
 
 def anneal(epoch, annealing_epochs, min_factor):
@@ -69,7 +98,7 @@ def train(
     # Setup a variational objective for gradient-based learning.
     # Note we use TraceEnum_ELBO in order to leverage Pyro's machinery
     # for automatic enumeration of the discrete latent variable y.
-    elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
+    elbo = RegularizedTraceGraphELBO(lambda_reg=0.1, strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
 
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
