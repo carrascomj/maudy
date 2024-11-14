@@ -133,10 +133,12 @@ def test_allostery_parity_with_methionine_maud_model(methionine_model: MaudInput
 
 def test_reversibility_parity_with_maud(methionine_model: MaudInput, methionine_allostery, methionine_reversibility):
     model = Maudy(methionine_model)
+    model.to_double()
     conc = methionine_allostery[0]
-    dgf, expected_dgr, expected_reversibility, psi = methionine_reversibility
+    dgf, expected_dgr, expected_reversibility, _ = methionine_reversibility
     kcat_pars = model.maud_params.kcat.prior
     enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
+
     dgr = get_dgr(
         model.S_enz,
         torch.Tensor(dgf)[model.met_to_mic],
@@ -152,7 +154,7 @@ def test_reversibility_parity_with_maud(methionine_model: MaudInput, methionine_
     expected_dgr = torch.Tensor(expected_dgr.iloc[1:, 0])
     assert_eq_tensors(dgr, expected_dgr, "dG_r", enzymatic_reactions, tolerance=1e-4)
     mics = [met.id for met in model.kinetic_model.mics]
-    conc = torch.FloatTensor(conc.loc[mics, :].to_numpy().T)
+    conc = torch.Tensor(conc.loc[mics, :].to_numpy().T)
     rev = get_reversibility(
         model.S_enz_thermo, dgr, conc, model.transported_charge, torch.Tensor([-0.11]), model.irreversible, RT / 310.15 * 298.15
     )
