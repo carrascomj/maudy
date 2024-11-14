@@ -48,10 +48,9 @@ def test_ci_aord_do_not_raise_nan(maud_input: MaudInput):
 
 
 def test_quenching_group_concentration_is_maintained(maud_input: MaudInput):
-    model, _ = train(maud_input, 10, True, False, True, True, 10, False)
+    model, _ = train(maud_input, 10, True, True, True, True, 10, False)
     samples = predict(model, 100, var_names=("ln_bal_conc", "quench_correction"))
     for group_idx in model.quench_groups:
-        x = samples["ln_bal_conc"][:, group_idx]
-        q = samples["quench_correction"][:, group_idx]
-        # 1e-11 is the clamping value of the remainder element
-        assert (x.exp().sum() - (x - q).exp().sum()) <= 1e-11
+        x = samples["ln_bal_conc"][:, :, group_idx]
+        q = samples["quench_correction"][:, :, group_idx]
+        assert (abs(x.exp().sum(dim=-1) - (x - q).exp().sum(dim=-1)) <= x.min().exp() * 0.001).all()
