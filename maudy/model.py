@@ -512,16 +512,34 @@ class Maudy(nn.Module):
             return out
         quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1)) * quench_efficiency
         q_index = 0
+        epsilon = 1e-14
         for group_idx in self.quench_groups:
             indices_to_subtract = group_idx[:-1]
             num_indices = len(indices_to_subtract)
-            out[:, indices_to_subtract] = quench_correction[:, q_index:q_index + num_indices]
-            q_index += num_indices
-
             sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
-            sum_conc_q = (ln_bal_conc[:, indices_to_subtract] - out[:, indices_to_subtract]).exp().sum(dim=-1)
-            remaining_conc = ln_bal_conc[:, group_idx[-1]].exp() - (sum_conc - sum_conc_q).clamp(1e-11)
-            out[:, group_idx[-1]] = remaining_conc.clamp(1e-14).log()
+            corrections = quench_correction[:, q_index:q_index + num_indices]
+            corrections = corrections.clamp(min=0)
+            out[:, indices_to_subtract] = corrections
+
+            corrected_ln_conc = ln_bal_conc[:, indices_to_subtract] - corrections
+            sum_conc_q = corrected_ln_conc.exp().sum(dim=-1)
+
+            # calibrate corrections such that corrected_ln_conc < sum_conc_q,
+            # making the remaining concentration in the group > 0.
+            exceed_mask = sum_conc_q >= (sum_conc - epsilon)
+            if exceed_mask.any():
+                scale = ((sum_conc - epsilon) / sum_conc_q).clamp(max=1.0)
+                corrections_adjusted = corrections * scale.unsqueeze(-1)
+                out[exceed_mask, :][:, indices_to_subtract] = corrections_adjusted[exceed_mask]
+                corrected_ln_conc = ln_bal_conc[:, indices_to_subtract] - corrections_adjusted
+                sum_conc_q = corrected_ln_conc.exp().sum(dim=-1)
+            remaining_conc = sum_conc - sum_conc_q
+            # remaining_conc must be positive
+            remaining_conc = remaining_conc.clamp(min=epsilon)
+            corrected_ln_conc_last = remaining_conc.log()
+            out[:, group_idx[-1]] = ln_bal_conc[:, group_idx[-1]] - corrected_ln_conc_last
+
+            q_index += num_indices
         # fill in those that do not participate in quench groups
         out[:, self.not_quench_groups] = quench_correction[:, q_index:(q_index + len(self.not_quench_groups))]
         return out
