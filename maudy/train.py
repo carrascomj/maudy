@@ -131,18 +131,19 @@ def sample(
         warnings.warn("Running smoke test but `--out-dir` was specified!")
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, quench, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
-    if smoke:
-        return
     out = (
         out_dir
         if out_dir is not None
         else Path(f"maudyout_{maud_input.config.name}_{get_timestamp()}")
     )
-    os.mkdir(out)
+    if not smoke:
+        os.mkdir(out)
+        shutil.copytree(maud_dir, out / "user_input")
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, quench, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
+    if smoke:
+        return
     torch.save(
         {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()},
         out / "model.pt",
     )
     pyro.get_param_store().save(str(out / "model_params.pt"))
-    shutil.copytree(maud_dir, out / "user_input")
