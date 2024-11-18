@@ -463,8 +463,8 @@ class Maudy(nn.Module):
             else []
         )
         self.not_quench_groups = torch.LongTensor([i for i in range(len(bal_mics)) if i not in (torch.cat(self.quench_groups) if self.quench_groups else [])])
-        # the input of the quenching neural network is balanced concentrations and vmax
-        quench_input = met_dim + len(enzymatic_reactions)
+        # the input of the quenching neural network is balanced concentrations
+        quench_input = met_dim
         quench_output = met_dim - len(self.quench_groups)
         self.quench = (
         (
@@ -501,7 +501,7 @@ class Maudy(nn.Module):
             for col in conserved.columns
         ]
 
-    def correct_quenching(self, ln_bal_conc: torch.Tensor, vmax: torch.Tensor):
+    def correct_quenching(self, ln_bal_conc: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.quenched_groups`.
@@ -509,7 +509,7 @@ class Maudy(nn.Module):
         out = torch.zeros_like(ln_bal_conc)
         if not self.should_quench:
             return out
-        quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1))
+        quench_correction = self.quench(ln_bal_conc)
         q_index = 0
         epsilon = 1e-14
         for group_idx in self.quench_groups:
@@ -782,7 +782,7 @@ class Maudy(nn.Module):
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             
             quench_correction = pyro.deterministic("quench_correction", 
-                                                   self.correct_quenching(ln_bal_conc, vmax))
+                                                   self.correct_quenching(ln_bal_conc))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
