@@ -7,9 +7,9 @@ import torch.nn as nn
 
 class Norm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape[-1] < 2:
+        if x.shape[0] <= 1:
             return x
-        return (x - x.mean(dim=-1).unsqueeze(1)) / torch.sqrt(x.var(dim=-1).unsqueeze(1) + 1e-12)
+        return (x - x.mean(dim=0)) / torch.sqrt(x.var(dim=0) + 1e-12)
 
 
 class Clamp(nn.Module):
