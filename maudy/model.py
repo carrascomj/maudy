@@ -11,7 +11,7 @@ import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
-from .black_box import BaseConcCoder, BaseDecoder, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -476,7 +476,7 @@ class Maudy(nn.Module):
         if not quench
         else nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
+                nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
                 for in_dim, out_dim in zip(
                     [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [quench_output]
                 )
@@ -488,8 +488,8 @@ class Maudy(nn.Module):
     def group_quenching_by_moieties(self) -> list[list[str]]:
         """Find metabolite groups sharing a conserved moiety."""
         mics = [met.id for met in self.kinetic_model.mics]
-        st = self.S.cpu().numpy()
-        conserved = extract_conserved_moiety_matrix(st, mics, 1e-7)
+        st = self.S[self.balanced_mics_idx, :].cpu().numpy()
+        conserved = extract_conserved_moiety_matrix(st, [mics[i] for i in self.balanced_mics_idx], 1e-7)
         if conserved is None:
             return []
         # filter out unbalanced metabolites
