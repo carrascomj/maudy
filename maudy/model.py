@@ -465,18 +465,17 @@ class Maudy(nn.Module):
                 for in_dim, out_dim in zip(
                     [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [quench_output]
                 )
-            ], nn.Linear(quench_output, quench_output)
+            ], nn.Linear(quench_output, quench_output), nn.Softplus()
         )
         )
         self.should_quench = quench
 
-    def correct_quenching(self, all_flux: torch.Tensor, total: torch.Tensor):
+    def correct_quenching(self, all_flux: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.quenched_groups`.
         """
-        q = (self.quench(all_flux) @ self.S.T)[:, self.balanced_mics_idx]
-        return q * total / q.sum(dim=-1).unsqueeze(1)
+        return (self.quench(all_flux) @ self.S.T)[:, self.balanced_mics_idx]
 
     def cuda(self):
         super().cuda()
@@ -716,11 +715,8 @@ class Maudy(nn.Module):
             # quenched concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             
-            # we put a prior on the total correction, assuming that generally
-            # we should not any need for corrections
-            total_quench = pyro.sample("total_quench", dist.Normal(self.float_tensor([0.0]), self.float_tensor([1e-3]))) if self.should_quench else self.float_tensor([0.0])
             quench_correction = pyro.deterministic("quench_correction", 
-                                                   self.correct_quenching(all_flux, total_quench))
+                                                   self.correct_quenching(all_flux))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
@@ -815,10 +811,6 @@ class Maudy(nn.Module):
         pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
-        if self.should_quench:
-            total_quench_mean = pyro.param("total_quench_mean", self.float_tensor([0]))
-            total_quench_std = pyro.param("total_quench_std", self.float_tensor([1e-3]), Positive)
-            total_quench = pyro.sample("total_quench", dist.Normal(total_quench_mean, total_quench_std))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
