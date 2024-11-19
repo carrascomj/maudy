@@ -480,7 +480,7 @@ class Maudy(nn.Module):
                 for in_dim, out_dim in zip(
                     [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [quench_output]
                 )
-            ], nn.Linear(quench_output, quench_output), nn.Softplus()
+            ], nn.Linear(quench_output, quench_output)
         )
         )
         self.should_quench = quench
@@ -501,13 +501,14 @@ class Maudy(nn.Module):
             for col in conserved.columns
         ]
 
-    def correct_quenching(self, ln_bal_conc: torch.Tensor):
+    def correct_quenching(self, ln_bal_conc: torch.Tensor, annealing_factor: float):
         """Gets quenching correction (if `self.quench` is True).
 
-        Mass conservation is forced through `self.quenched_groups`.
+        Mass conservation is forced through `self.quenched_groups`. Only comes into
+        place after the annealing stage (annealing factor >= 1).
         """
         out = torch.zeros_like(ln_bal_conc)
-        if not self.should_quench:
+        if not self.should_quench or annealing_factor < 1:
             return out
         quench_correction = self.quench(ln_bal_conc)
         q_index = 0
@@ -782,7 +783,7 @@ class Maudy(nn.Module):
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             
             quench_correction = pyro.deterministic("quench_correction", 
-                                                   self.correct_quenching(ln_bal_conc))
+                                                   self.correct_quenching(ln_bal_conc, annealing_factor))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
