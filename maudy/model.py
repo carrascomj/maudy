@@ -449,7 +449,7 @@ class Maudy(nn.Module):
         if self.has_opt_unb:
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
-        quench_output = len(reactions)
+        quench_output = len(reactions) + 1
         # the input of the quenching neural network is all reactions
         quench_input = len(reactions)
         self.quench = (
@@ -471,13 +471,24 @@ class Maudy(nn.Module):
         )
         self.should_quench = quench
 
-    def correct_quenching(self, all_flux: torch.Tensor):
+    def correct_quenching(self, all_flux: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.quenched_groups`, scaled
         to sum up to total (expected to be a prior per condition).
+
+        Returns
+        -------
+        q: torch.Tensor
+            quenching correction (in real line), to be substracted to log balanced concentrations
+        std: torch.Tensor
+            one-dimensional, standard deviation of the quenching correction
+
         """
-        return (self.quench(all_flux) @ self.S.T)[:, self.balanced_mics_idx]
+        q_std = self.quench(all_flux)
+        q = q_std[:, :-1]
+        std = q_std[:, -1]
+        return (q @ self.S.T)[:, self.balanced_mics_idx], std
 
     def cuda(self):
         super().cuda()
@@ -886,8 +897,8 @@ class Maudy(nn.Module):
                     conc, km, ki if self.has_ci else 0, kcat, enz_conc,
                     dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
                 )
-                q = self.correct_quenching(all_flux)
-                quench_correction = pyro.sample("quench_correction", dist.Normal(q, 1e-5).to_event(1))
+                q, q_std = self.correct_quenching(all_flux)
+                pyro.sample("quench_correction", dist.Normal(q, nn.functional.softplus(q_std).unsqueeze(1).expand(-1, q.shape[1])).to_event(1))
 
     def print_inputs(self):
         print(
