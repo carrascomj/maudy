@@ -719,8 +719,8 @@ class Maudy(nn.Module):
             
             # we put a prior on the total correction, assuming that generally
             # we should not any need for corrections
-            quench_correction = pyro.deterministic("quench_correction", 
-                                                   self.correct_quenching(all_flux))
+
+            quench_correction = pyro.sample("quench_correction", dist.Normal(torch.zeros_like(ln_bal_conc), 1e-5).to_event(1)) if self.should_quench else torch.zeros_like(ln_bal_conc)
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
@@ -745,20 +745,6 @@ class Maudy(nn.Module):
                     "steady_state_dev",
                      -ssd_factor.sum(dim=-1),
                 )
-                if self.should_quench:
-                    # add loss term to make concentrations before quenching have less SSD
-                    if self.has_fdx:
-                        conc_comp = torch.cat([conc_comp, fdx_ratio.log()], dim=1)
-                    all_flux_q = compute_flux(
-                        self,
-                        conc_comp.exp(), km, ki if self.has_ci else 0, kcat, enzyme_conc,
-                        dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
-                    )
-                    ssd_quenched = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
-                    delta_ssd = ssd_quenched.abs() - ssd.abs()
-                    # relu clamps delta_ssd, so positive differences become zero since
-                    # we do not want to enforce SSD over the quenched concentrations artificially
-                    pyro.factor("ssd_quench_penalty", -1000 * torch.relu(delta_ssd).sum())
 
                 # ssd_factor = pyro.deterministic(
                 #     "ssd_factor",
@@ -827,7 +813,7 @@ class Maudy(nn.Module):
             rest = torch.cat([rest, tc, dc])
 
         psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))
-        pyro.sample(
+        psi = pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
         with pyro.plate("experiment", size=len(self.experiments)):
@@ -873,14 +859,14 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             latent_bal_conc_loc, bal_conc_scale = concoder_output
-            pyro.sample(
+            unb_conc = pyro.sample(
                 "unb_conc",
                 dist.LogNormal(
                     unb_conc_param_loc_full, self.unb_conc_scale
                 ).to_event(1),
             )
             with pyro.poutine.scale(scale=annealing_factor):
-                pyro.sample(
+                bal_conc = pyro.sample(
                     "latent_bal_conc",
                     dist.LogNormal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
                 )
@@ -888,6 +874,37 @@ class Maudy(nn.Module):
                 fdx_ratio = pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
+            if self.should_quench:
+                # run NN inference for the quenching correction
+                conc = kcat.new_ones(len(self.experiments), self.num_mics)
+                conc[:, self.balanced_mics_idx] = bal_conc
+                conc[:, self.unbalanced_mics_idx] = unb_conc
+                if self.has_fdx:
+                    conc = torch.cat([conc, fdx_ratio], dim=1)
+                all_flux = compute_flux(
+                    self,
+                    conc, km, ki if self.has_ci else 0, kcat, enz_conc,
+                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
+                )
+                q = self.correct_quenching(all_flux)
+                quench_correction = pyro.sample("quench_correction", dist.Normal(q, 1e-5).to_event(1))
+                # add loss term to make concentrations before quenching have less SSD
+                conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
+                conc_comp[:, self.balanced_mics_idx] = bal_conc.log() - quench_correction
+                conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
+                if self.has_fdx:
+                    conc_comp = torch.cat([conc_comp, fdx_ratio.log()], dim=1)
+                all_flux_q = compute_flux(
+                    self,
+                    conc_comp.exp(), km, ki if self.has_ci else 0, kcat, enz_conc,
+                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
+                )
+                ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
+                ssd_quenched = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
+                delta_ssd = ssd_quenched.abs() - ssd.abs()
+                # relu clamps delta_ssd, so positive differences become zero since
+                # we do not want to enforce SSD over the quenched concentrations artificially
+                pyro.factor("ssd_quench_penalty", 1000 * torch.relu(delta_ssd).sum())
 
     def print_inputs(self):
         print(

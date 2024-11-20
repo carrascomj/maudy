@@ -13,7 +13,6 @@ def test_end_to_end_predict_retrieves_requested_variables(maud_input):
         "dgr",
         "flux",
         "ln_bal_conc",
-        "quench_correction",
     )
     maudy, _ = train(maud_input, 100, True, False, True, True, 10, False)
     samples = predict(maudy, 100, var_names=var_names)

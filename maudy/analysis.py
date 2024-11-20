@@ -131,9 +131,10 @@ def ppc(model_output: Path, num_epochs: int = 800):
         "dgr",
         "flux",
         "ln_bal_conc",
-        "quench_correction",
     )
     maudy, _ = load(model_output)
+    if maudy.should_quench:
+        var_names = var_names + ("quench_correction")
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)
     if "flux" in samples:
