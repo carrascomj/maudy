@@ -63,5 +63,5 @@ def test_quenching_group_concentration_is_maintained(maud_input: MaudInput):
         i += 1
         x = samples["ln_bal_conc"][:, :, group_idx]
         q = samples["quench_correction"][:, :, group_idx]
-        assert (abs(x.exp().sum(dim=-1) - (x - q).exp().sum(dim=-1)) <= x.min().exp() * 0.01).all()
+        assert (abs(x.exp().sum(dim=-1) - (x - q).exp().sum(dim=-1)) <= x.min().exp() * 0.001).all()
     assert len(model.quench_groups) > 0
