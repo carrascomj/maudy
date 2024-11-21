@@ -12,7 +12,6 @@ from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
 from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
 from .kinetics import (
-    compute_flux,
     get_allostery,
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -449,7 +448,7 @@ class Maudy(nn.Module):
         if self.has_opt_unb:
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
-        quench_output = len(reactions) + 1
+        quench_output = len(reactions)
         # the input of the quenching neural network is all reactions
         quench_input = len(reactions)
         self.quench = (
@@ -471,24 +470,13 @@ class Maudy(nn.Module):
         )
         self.should_quench = quench
 
-    def correct_quenching(self, all_flux: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def correct_quenching(self, all_flux: torch.Tensor, total: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
-        Mass conservation is forced through `self.quenched_groups`, scaled
-        to sum up to total (expected to be a prior per condition).
-
-        Returns
-        -------
-        q: torch.Tensor
-            quenching correction (in real line), to be substracted to log balanced concentrations
-        std: torch.Tensor
-            one-dimensional, standard deviation of the quenching correction
-
+        Mass conservation is forced through `self.quenched_groups`.
         """
-        q_std = self.quench(all_flux)
-        q = q_std[:, :-1]
-        std = q_std[:, -1]
-        return (q @ self.S.T)[:, self.balanced_mics_idx], std
+        q = (self.quench(all_flux) @ self.S.T)[:, self.balanced_mics_idx]
+        return q * total / q.sum(dim=-1).unsqueeze(1)
 
     def cuda(self):
         super().cuda()
@@ -576,6 +564,11 @@ class Maudy(nn.Module):
         # TODO: need to take this from the config (and done in th epalte)
         psi = pyro.sample(
             "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
+        )
+        total_quench = (
+            pyro.sample("total_quench", dist.Normal(self.float_tensor([0.0]), self.float_tensor([1e-3])))
+            if self.should_quench
+            else self.float_tensor([0.0])
         )
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
@@ -730,8 +723,8 @@ class Maudy(nn.Module):
             
             # we put a prior on the total correction, assuming that generally
             # we should not any need for corrections
-
-            quench_correction = pyro.sample("quench_correction", dist.Normal(torch.zeros_like(ln_bal_conc), 1e-5).to_event(1)) if self.should_quench else torch.zeros_like(ln_bal_conc)
+            quench_correction = pyro.deterministic("quench_correction", 
+                                                   self.correct_quenching(all_flux, total_quench))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
@@ -756,7 +749,6 @@ class Maudy(nn.Module):
                     "steady_state_dev",
                      -ssd_factor.sum(dim=-1),
                 )
-
                 # ssd_factor = pyro.deterministic(
                 #     "ssd_factor",
                 #     ssd.abs() / (ln_bal_conc.exp() + 1e-13),
@@ -824,9 +816,13 @@ class Maudy(nn.Module):
             rest = torch.cat([rest, tc, dc])
 
         psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))
-        psi = pyro.sample(
+        pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
+        if self.should_quench:
+            total_quench_mean = pyro.param("total_quench_mean", self.float_tensor([0]))
+            total_quench_std = pyro.param("total_quench_std", self.float_tensor([1e-3]), Positive)
+            total_quench = pyro.sample("total_quench", dist.Normal(total_quench_mean, total_quench_std))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
@@ -870,14 +866,14 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             latent_bal_conc_loc, bal_conc_scale = concoder_output
-            unb_conc = pyro.sample(
+            pyro.sample(
                 "unb_conc",
                 dist.LogNormal(
                     unb_conc_param_loc_full, self.unb_conc_scale
                 ).to_event(1),
             )
             with pyro.poutine.scale(scale=annealing_factor):
-                bal_conc = pyro.sample(
+                pyro.sample(
                     "latent_bal_conc",
                     dist.LogNormal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
                 )
@@ -885,20 +881,6 @@ class Maudy(nn.Module):
                 fdx_ratio = pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
-            if self.should_quench:
-                # run NN inference for the quenching correction
-                conc = kcat.new_ones(len(self.experiments), self.num_mics)
-                conc[:, self.balanced_mics_idx] = bal_conc
-                conc[:, self.unbalanced_mics_idx] = unb_conc
-                if self.has_fdx:
-                    conc = torch.cat([conc, fdx_ratio], dim=1)
-                all_flux = compute_flux(
-                    self,
-                    conc, km, ki if self.has_ci else 0, kcat, enz_conc,
-                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
-                )
-                q, q_std = self.correct_quenching(all_flux)
-                pyro.sample("quench_correction", dist.Normal(q, nn.functional.softplus(q_std).unsqueeze(1).expand(-1, q.shape[1])).to_event(1))
 
     def print_inputs(self):
         print(
