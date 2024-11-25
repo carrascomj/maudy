@@ -84,19 +84,6 @@ class BaseConcCoder(nn.Module):
                     if normalize is not None
                     else nn.Identity(),
                 ),
-                nn.Sequential(  # scale layer
-                    *[
-                        nn.Sequential(
-                            nn.Linear(in_dim, out_dim),
-                            Norm() if batchnorm else nn.Identity(),
-                            nn.ReLU(),
-                            nn.Dropout1d() if drop_out else nn.Identity(),
-                        )
-                        for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
-                    ],
-                    nn.Linear(out_dims[-1], out_dims[-1]),
-                    nn.Softplus(),  # makes the output positive
-                ),
             ],
         )
         self._initialize_weights(self)
@@ -194,6 +181,6 @@ class BaseDecoder(nn.Module):
         drain: torch.Tensor,
     ):
         if self.normalize:
-            met, unb, enz, drain = met.log(), unb.log(), enz.log(), drain * 1e6
+            met, unb, enz, drain = met, unb.log(), enz.log(), drain * 1e6
         features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)

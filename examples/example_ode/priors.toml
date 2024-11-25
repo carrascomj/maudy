@@ -3,6 +3,8 @@ km = [
   {metabolite = "B", compartment = "c", enzyme = "r1", exploc = 1, scale = 0.2},
   {metabolite = "A", compartment = "c", enzyme = "r2A", exploc = 2, scale = 0.2},
   {metabolite = "C", compartment = "c", enzyme = "r2A", exploc = 0.5, scale = 0.2},
+  {metabolite = "A", compartment = "c", enzyme = "r2B", exploc = 1, scale = 0.2},
+  {metabolite = "C", compartment = "c", enzyme = "r2B", exploc = 2, scale = 0.2},
   {metabolite = "B", compartment = "c", enzyme = "r3", exploc = 0.5, scale = 0.2},
   {metabolite = "D", compartment = "c", enzyme = "r3", exploc = 2, scale = 0.2},
   {metabolite = "C", compartment = "c", enzyme = "r4", exploc = 1, scale = 0.2},
@@ -20,11 +22,13 @@ dissociation_constant = [
 
 transfer_constant = [
   {enzyme = "r2A", exploc = 1, scale = 0.2},
+  {enzyme = "r2B", exploc = 1, scale = 0.2},
 ]
 
 kcat = [
   {enzyme = "r1", reaction = "r1", exploc = 0.5, scale = 0.2},
   {enzyme = "r2A", reaction = "r2", exploc = 2, scale = 0.2},
+  {enzyme = "r2B", reaction = "r2B", exploc = 1, scale = 0.2},
   {enzyme = "r3", reaction = "r3", exploc = 2, scale = 0.2},
   {enzyme = "r4", reaction = "r4", exploc = 1, scale = 0.2},
 ]
@@ -37,6 +41,7 @@ conc_unbalanced = [
 conc_enzyme = [
   {enzyme = "r1", experiment = "condition1", exploc = 1, scale = 0.2},
   {enzyme = "r2A", experiment = "condition1", exploc = 2, scale = 0.2},
+  {enzyme = "r2B", experiment = "condition1", exploc = 3, scale = 0.2},
   {enzyme = "r3", experiment = "condition1", exploc = 2, scale = 0.2},
   {enzyme = "r4", experiment = "condition1", exploc = 3, scale = 0.2},
 ]

@@ -634,6 +634,7 @@ class Maudy(nn.Module):
         )
         if self.should_quench:
             sigma_quench = pyro.sample("sigma_quench", dist.LogNormal(-3.0, 0.5))
+        sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(2.5, 1.5))
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -659,7 +660,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
+                    dist.Normal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), sigma_latent).to_event(
                         1
                     ),
                 )
@@ -891,6 +892,9 @@ class Maudy(nn.Module):
             sigma_quench_loc = pyro.param("sigma_quench_loc", self.float_tensor([-3.0]))
             sigma_quench_scale = pyro.param("sigma_quench_scale", self.float_tensor([0.5]), constraint=dist.constraints.positive)
             pyro.sample("sigma_quench", dist.LogNormal(sigma_quench_loc, sigma_quench_scale))
+        sigma_latent_loc = pyro.param("sigma_latent_loc", self.float_tensor([2.5]), constraint=dist.constraints.positive)
+        sigma_latent_scale = pyro.param("sigma_latent_scale", self.float_tensor([1.5]), constraint=dist.constraints.positive)
+        sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
@@ -937,7 +941,7 @@ class Maudy(nn.Module):
                 )
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
-            latent_bal_conc_loc, bal_conc_scale = concoder_output
+            latent_bal_conc_loc = concoder_output.pop()
             unb_conc_scale = pyro.param(
                 "unb_conc_scale",
                 lambda: self.unb_conc_scale,
@@ -953,7 +957,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
+                    dist.Normal(latent_bal_conc_loc, sigma_latent).to_event(1),
                 )
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
@@ -962,11 +966,11 @@ class Maudy(nn.Module):
             if self.should_quench:
                 # run NN inference for the quenching correction
                 # we use a Delta distribution because we assume that quenching is deterministic from [balanced]
-                q = pyro.sample("quench_correction_shared", dist.Delta(self.quench(bal_conc.log())).to_event(1))
+                q = pyro.sample("quench_correction_shared", dist.Delta(self.quench(bal_conc)).to_event(1))
 
                 # add loss term to make concentrations before quenching have less SSD
                 conc = kcat.new_ones(len(self.experiments), self.num_mics)
-                conc[:, self.balanced_mics_idx] = bal_conc
+                conc[:, self.balanced_mics_idx] = bal_conc.exp()
                 conc[:, self.unbalanced_mics_idx] = unb_conc
                 if self.has_fdx:
                     conc = torch.cat([conc, fdx_ratio], dim=1)
@@ -976,9 +980,9 @@ class Maudy(nn.Module):
                     dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
                 )
 
-                quench_correction = self.correct_quenching(q, bal_conc.log())
+                quench_correction = self.correct_quenching(q, bal_conc)
                 conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-                conc_comp[:, self.balanced_mics_idx] = bal_conc.log() - quench_correction
+                conc_comp[:, self.balanced_mics_idx] = bal_conc - quench_correction
                 conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
                 if self.has_fdx:
                     conc_comp = torch.cat([conc_comp, fdx_ratio.log()], dim=1)

@@ -133,6 +133,7 @@ def ppc(model_output: Path, num_epochs: int = 800):
         "ln_bal_conc",
     )
     maudy, _ = load(model_output)
+    maudy.to_double()
     if maudy.should_quench:
         var_names = var_names + ("quench_correction")
     samples = predict(maudy, num_epochs, var_names=var_names)
