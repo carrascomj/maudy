@@ -486,6 +486,8 @@ class Maudy(nn.Module):
         )
         )
         self.should_quench = quench
+        if self.should_quench:
+            self.correction_mask  = self.get_observed_correction_mask()
 
     def group_quenching_by_moieties(self) -> list[list[str]]:
         """Find metabolite groups sharing a conserved moiety."""
@@ -502,6 +504,33 @@ class Maudy(nn.Module):
             conserved.loc[conserved.loc[:, col] != 0, col].index.tolist()
             for col in conserved.columns
         ]
+
+    def get_observed_correction_mask(self):
+        """Setup mask for correction.
+
+        The criterion for applying a learned correction from steady-state is
+        observed OR in a conserved group with an observed metabolite.
+        """
+        correction_mask = torch.zeros_like(
+            self.obs_conc_mask[:, self.balanced_mics_idx], dtype=torch.bool
+        )
+
+        for i in range(len(self.experiments)):
+            exp_mask = torch.zeros_like(self.balanced_mics_idx, dtype=torch.bool)
+            observed_mets = self.obs_conc_mask[i, self.balanced_mics_idx]
+            not_in_group = set(range(len(self.balanced_mics_idx))) - (
+                set(torch.cat(self.quench_groups).tolist()) if self.quench_groups else set()
+            )
+            exp_mask[list(not_in_group)] = observed_mets[list(not_in_group)]
+            # all mets in each conserved moiety group are True if any
+            # of the members is observed
+            for group_idx in self.quench_groups:
+                if observed_mets[group_idx].any():
+                    exp_mask[group_idx] = True
+            correction_mask[i] = exp_mask
+
+        return correction_mask
+
 
     def correct_quenching(self, quench_correction: torch.Tensor, ln_bal_conc: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
@@ -543,6 +572,8 @@ class Maudy(nn.Module):
             q_index += num_indices
         # fill in those that do not participate in quench groups
         out[:, self.not_quench_groups] = quench_correction[:, q_index:(q_index + len(self.not_quench_groups))]
+        # only apply correction to observed metabolites
+        out = out * self.correction_mask
         return out
 
     def cuda(self):
@@ -787,11 +818,7 @@ class Maudy(nn.Module):
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
             # we share the quench correction before adjusting by conserved groups
             # so that we can apply the normalization in both model (prior) and guide (from NN)
-            quench_correction = pyro.sample(
-                "quench_correction_shared",
-                dist.Normal(self.float_tensor([0.0]).repeat(len(self.experiments), self.quench_output), sigma_quench).to_event(1)
-            ) if self.should_quench else torch.zeros_like(ln_bal_conc)
-            quench_correction = pyro.deterministic("quench_correction", self.correct_quenching(quench_correction, ln_bal_conc))
+            quench_correction = pyro.deterministic("quench_correction", self.correct_quenching(self.quench(ln_bal_conc), ln_bal_conc))
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
@@ -884,7 +911,7 @@ class Maudy(nn.Module):
             rest = torch.cat([rest, tc, dc])
 
         psi_mean = pyro.param("psi_mean", self.float_tensor(-0.110))
-        psi = pyro.sample(
+        pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
         if self.should_quench:
@@ -963,40 +990,6 @@ class Maudy(nn.Module):
                 fdx_ratio = pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
-            if self.should_quench:
-                # run NN inference for the quenching correction
-                # we use a Delta distribution because we assume that quenching is deterministic from [balanced]
-                q = pyro.sample("quench_correction_shared", dist.Delta(self.quench(bal_conc)).to_event(1))
-
-                # add loss term to make concentrations before quenching have less SSD
-                conc = kcat.new_ones(len(self.experiments), self.num_mics)
-                conc[:, self.balanced_mics_idx] = bal_conc.exp()
-                conc[:, self.unbalanced_mics_idx] = unb_conc
-                if self.has_fdx:
-                    conc = torch.cat([conc, fdx_ratio], dim=1)
-                all_flux = compute_flux(
-                    self,
-                    conc, km, ki if self.has_ci else 0, kcat, enz_conc,
-                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
-                )
-
-                quench_correction = self.correct_quenching(q, bal_conc)
-                conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-                conc_comp[:, self.balanced_mics_idx] = bal_conc - quench_correction
-                conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
-                if self.has_fdx:
-                    conc_comp = torch.cat([conc_comp, fdx_ratio.log()], dim=1)
-                all_flux_q = compute_flux(
-                    self,
-                    conc_comp.exp(), km, ki if self.has_ci else 0, kcat, enz_conc,
-                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
-                )
-                ssd = all_flux @ self.S.T[:, self.balanced_mics_idx]
-                ssd_quenched = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
-                delta_ssd = ssd_quenched.abs() - ssd.abs()
-                # relu clamps delta_ssd, so positive differences become zero since
-                # we do not want to enforce SSD over the quenched concentrations artificially
-                pyro.factor("ssd_quench_penalty", 1000 * torch.relu(delta_ssd).sum())
 
     def print_inputs(self):
         print(
