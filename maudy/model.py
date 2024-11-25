@@ -853,8 +853,9 @@ class Maudy(nn.Module):
             else self.float_tensor([0.0])
         )
         kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
+        kcat_param_scale = pyro.param("kcat_scale", self.kcat_scale, Positive)
         kcat = pyro.sample(
-            "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
+            "kcat", dist.LogNormal(kcat_param_loc, kcat_param_scale).to_event(1)
         )
         km_loc = pyro.param("km_loc", self.km_loc)
         km_scale = pyro.param("km_scale", self.km_scale, Positive)
@@ -894,10 +895,14 @@ class Maudy(nn.Module):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
             ) if train else self.enzyme_concs_loc
+            enzyme_concs_param_scale = pyro.param(
+                "enzyme_concs_scale", lambda: self.enzyme_concs_scale, event_dim=1,
+                constraint=Positive,
+            ) if train else self.enzyme_concs_scale
             enz_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(
-                    enzyme_concs_param_loc, self.enzyme_concs_scale
+                    enzyme_concs_param_loc, enzyme_concs_param_scale
                 ).to_event(1),
             )
             drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1) if train else self.drain_mean
@@ -933,10 +938,16 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             latent_bal_conc_loc, bal_conc_scale = concoder_output
+            unb_conc_scale = pyro.param(
+                "unb_conc_scale",
+                lambda: self.unb_conc_scale,
+                constraint=Positive,
+                event_dim=1,
+            ) if train else self.unb_conc_scale
             unb_conc = pyro.sample(
                 "unb_conc",
                 dist.LogNormal(
-                    unb_conc_param_loc_full, self.unb_conc_scale
+                    unb_conc_param_loc_full, unb_conc_scale
                 ).to_event(1),
             )
             with pyro.poutine.scale(scale=annealing_factor):
