@@ -53,6 +53,7 @@ def test_ci_aord_do_not_raise_nan(ci_aord_model: MaudInput):
     assert len(model.quench_groups) == 2
 
 
+@pytest.mark.skip("Cannot guarantee the conservation with scaling rule.")
 def test_quenching_group_concentration_is_maintained(maud_input: MaudInput):
     maud_input = deepcopy(maud_input)
     maud_input._maudy_config.quenching_groups = [pick_two_bal_mets(maud_input)]

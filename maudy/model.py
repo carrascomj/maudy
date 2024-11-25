@@ -663,9 +663,7 @@ class Maudy(nn.Module):
         psi = pyro.sample(
             "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
         )
-        if self.should_quench:
-            sigma_quench = pyro.sample("sigma_quench", dist.LogNormal(-3.0, 0.5))
-        sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(2.5, 1.5))
+        sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(self.float_tensor([2.5]), self.float_tensor([1.5])))
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -814,13 +812,23 @@ class Maudy(nn.Module):
                 dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
-            # quenched concentrations
+            # corrected concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-            # we share the quench correction before adjusting by conserved groups
-            # so that we can apply the normalization in both model (prior) and guide (from NN)
-            quench_correction = pyro.deterministic("quench_correction", self.correct_quenching(self.quench(ln_bal_conc), ln_bal_conc))
-            conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
+            q = self.correct_quenching(self.quench(ln_bal_conc), ln_bal_conc)
+            conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
+            if self.should_quench:
+                # scale correction by the increase in SSD
+                all_flux_q = compute_flux(
+                    self,
+                    (torch.cat([conc_comp, fdx_ratio.log()], dim=1) if self.has_fdx else conc_comp).exp(), km, ki if self.has_ci else 0, kcat, enzyme_conc,
+                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
+                )
+                ssd_after_q = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
+                q = torch.sigmoid(ssd_after_q.abs() - ssd.abs()) * q
+                conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
+            # annotate final quenching corrrection
+            pyro.deterministic("quench_correction", q)
             for i in idx:
                 pyro.sample(
                     f"y_conc_train_{i}",
@@ -914,11 +922,6 @@ class Maudy(nn.Module):
         pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
-        if self.should_quench:
-            # run NN inference for the quenching correction
-            sigma_quench_loc = pyro.param("sigma_quench_loc", self.float_tensor([-3.0]))
-            sigma_quench_scale = pyro.param("sigma_quench_scale", self.float_tensor([0.5]), constraint=dist.constraints.positive)
-            pyro.sample("sigma_quench", dist.LogNormal(sigma_quench_loc, sigma_quench_scale))
         sigma_latent_loc = pyro.param("sigma_latent_loc", self.float_tensor([2.5]), constraint=dist.constraints.positive)
         sigma_latent_scale = pyro.param("sigma_latent_scale", self.float_tensor([1.5]), constraint=dist.constraints.positive)
         sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
@@ -975,14 +978,14 @@ class Maudy(nn.Module):
                 constraint=Positive,
                 event_dim=1,
             ) if train else self.unb_conc_scale
-            unb_conc = pyro.sample(
+            pyro.sample(
                 "unb_conc",
                 dist.LogNormal(
                     unb_conc_param_loc_full, unb_conc_scale
                 ).to_event(1),
             )
             with pyro.poutine.scale(scale=annealing_factor):
-                bal_conc = pyro.sample(
+                pyro.sample(
                     "latent_bal_conc",
                     dist.Normal(latent_bal_conc_loc, sigma_latent).to_event(1),
                 )
