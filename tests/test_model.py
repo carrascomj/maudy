@@ -7,9 +7,9 @@ from maudy.model import Maudy
 
 
 @pytest.mark.parametrize("normalize", [True, False])
-@pytest.mark.parametrize("quench", [True, False])
-def test_load_product_does_not_raise(maud_input, normalize, quench):
-    Maudy(maud_input=maud_input, normalize=normalize, quench=quench)
+@pytest.mark.parametrize("correct", [True, False])
+def test_load_product_does_not_raise(maud_input, normalize, correct):
+    Maudy(maud_input=maud_input, normalize=normalize, correct=correct)
 
 
 def test_all_reversible_mechanisms_are_correct(maud_input):

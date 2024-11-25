@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field
 class NeuralNetworkConfig(BaseModel):
     met_dims: list[int] = [256, 256, 256, 256]
     km_dims: list[int] = [256, 256, 16]
-    quench_dims: list[int] = [32, 64, 64, 32, 32]
+    correction_dims: list[int] = [32, 64, 64, 32, 32]
 
 
 class MaudyConfig(BaseModel):
     ferredoxin: Optional[dict[str, float]] = None
     neural_network: NeuralNetworkConfig = Field(default_factory=NeuralNetworkConfig)
     optimize_unbalanced_metabolites: list[str] = []
-    quenching_groups: list[list[str]] = []
+    correction_groups: list[list[str]] = []
     temperature: float = T
     dgf_water: float = DGF_WATER
 

@@ -1,7 +1,7 @@
 from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
-from maudy.quench_preprocessing import extract_conserved_moiety_matrix
+from maudy.precorrection import extract_conserved_moiety_matrix
 
 import pandas as pd
 import pyro
@@ -35,7 +35,7 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
 
 
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput, normalize: bool = False, quench: bool = False):
+    def __init__(self, maud_input: MaudInput, normalize: bool = False, correct: bool = False):
         """Initialize the priors of the model.
 
         maud_input: MaudInput
@@ -51,7 +51,7 @@ class Maudy(nn.Module):
             and drains and fluxes are multiplied by 1e6 (mumol). The output is
             clamped between 0.6 orders of magnitude of the higher and lowest
             observed or prior concentrations.
-        quench: bool, default=False
+        correction: bool, default=False
             whether to add a model that learns a transformation from steady
             state concentrations - that fits the SSD and fluxes - to observed
             concentrations.
@@ -451,45 +451,45 @@ class Maudy(nn.Module):
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
         met_dim = len(self.balanced_mics_idx)
-        # users-defined groups that are quenched with opposing parameters
-        quenching_groups = maud_input._maudy_config.quenching_groups
-        quenching_groups = quenching_groups if quenching_groups else self.group_quenching_by_moieties()
-        self.quenching_groups_named = quenching_groups
-        self.quench_groups = (
+        # users-defined groups that are corrected with opposing parameters
+        correction_groups = maud_input._maudy_config.correction_groups
+        correction_groups = correction_groups if correction_groups else self.group_balanced_moieties()
+        self.correction_groups_named = correction_groups
+        self.correct_groups = (
             [
                 torch.LongTensor([bal_mics.index(met) for met in q_group])
-                for q_group in quenching_groups
+                for q_group in correction_groups
             ]
-            if quenching_groups and quench
+            if correction_groups and correct
             else []
         )
-        self.not_quench_groups = torch.LongTensor([i for i in range(len(bal_mics)) if i not in (torch.cat(self.quench_groups) if self.quench_groups else [])])
+        self.not_correct_groups = torch.LongTensor([i for i in range(len(bal_mics)) if i not in (torch.cat(self.correct_groups) if self.correct_groups else [])])
         # the input of the quenching neural network is balanced concentrations
-        quench_input = met_dim
-        quench_output = met_dim - len(self.quench_groups)
-        self.quench_output = quench_output
-        self.quench = (
+        correct_input = met_dim
+        correct_output = met_dim - len(self.correct_groups)
+        self.correct_output = correct_output
+        self.correct = (
         (
             lambda _: torch.zeros(
                 (len(self.experiments), met_dim), device=self.water_stoichiometry.device,
                 dtype=self.water_stoichiometry.dtype
             )
         )
-        if not quench
+        if not correct
         else nn.Sequential(
             *[
                 nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
                 for in_dim, out_dim in zip(
-                    [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [quench_output]
+                    [correct_input] + nn_config.correction_dims, nn_config.correction_dims + [correct_output]
                 )
-            ], nn.Linear(quench_output, quench_output)
+            ], nn.Linear(correct_output, correct_output)
         )
         )
-        self.should_quench = quench
-        if self.should_quench:
+        self.should_correct = correct
+        if self.should_correct:
             self.correction_mask  = self.get_observed_correction_mask()
 
-    def group_quenching_by_moieties(self) -> list[list[str]]:
+    def group_balanced_moieties(self) -> list[list[str]]:
         """Find metabolite groups sharing a conserved moiety."""
         mics = [met.id for met in self.kinetic_model.mics]
         st = self.S[self.balanced_mics_idx, :].cpu().numpy()
@@ -519,12 +519,12 @@ class Maudy(nn.Module):
             exp_mask = torch.zeros_like(self.balanced_mics_idx, dtype=torch.bool)
             observed_mets = self.obs_conc_mask[i, self.balanced_mics_idx]
             not_in_group = set(range(len(self.balanced_mics_idx))) - (
-                set(torch.cat(self.quench_groups).tolist()) if self.quench_groups else set()
+                set(torch.cat(self.correct_groups).tolist()) if self.correct_groups else set()
             )
             exp_mask[list(not_in_group)] = observed_mets[list(not_in_group)]
             # all mets in each conserved moiety group are True if any
             # of the members is observed
-            for group_idx in self.quench_groups:
+            for group_idx in self.correct_groups:
                 if observed_mets[group_idx].any():
                     exp_mask[group_idx] = True
             correction_mask[i] = exp_mask
@@ -532,22 +532,22 @@ class Maudy(nn.Module):
         return correction_mask
 
 
-    def correct_quenching(self, quench_correction: torch.Tensor, ln_bal_conc: torch.Tensor):
+    def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
-        Mass conservation is forced through `self.quenched_groups`, and the total
+        Mass conservation is forced through `self.correct_groups`, and the total
         quenching amount is scaled by a parameter `total` from the model.
         """
         out = torch.zeros_like(ln_bal_conc)
-        if not self.should_quench:
+        if not self.should_correct:
             return out
         q_index = 0
         epsilon = 1e-14
-        for group_idx in self.quench_groups:
+        for group_idx in self.correct_groups:
             indices_to_subtract = group_idx[:-1]
             num_indices = len(indices_to_subtract)
             sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
-            corrections = quench_correction[:, q_index:q_index + num_indices]
+            corrections = correction[:, q_index:q_index + num_indices]
             corrections = corrections.clamp(min=0)
             out[:, indices_to_subtract] = corrections
 
@@ -570,8 +570,8 @@ class Maudy(nn.Module):
             out[:, group_idx[-1]] = ln_bal_conc[:, group_idx[-1]] - corrected_ln_conc_last
 
             q_index += num_indices
-        # fill in those that do not participate in quench groups
-        out[:, self.not_quench_groups] = quench_correction[:, q_index:(q_index + len(self.not_quench_groups))]
+        # fill in those that do not participate in conserved groups
+        out[:, self.not_correct_groups] = correction[:, q_index:(q_index + len(self.not_correct_groups))]
         # only apply correction to observed metabolites
         out = out * self.correction_mask
         return out
@@ -814,10 +814,10 @@ class Maudy(nn.Module):
             )
             # corrected concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-            q = self.correct_quenching(self.quench(ln_bal_conc), ln_bal_conc)
+            q = self.normalize_correction(self.correct(ln_bal_conc), ln_bal_conc)
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
-            if self.should_quench:
+            if self.should_correct:
                 # scale correction by the increase in SSD
                 all_flux_q = compute_flux(
                     self,
@@ -827,8 +827,8 @@ class Maudy(nn.Module):
                 ssd_after_q = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
                 q = torch.sigmoid(ssd_after_q.abs() - ssd.abs()) * q
                 conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
-            # annotate final quenching corrrection
-            pyro.deterministic("quench_correction", q)
+            # annotate final corrrection
+            pyro.deterministic("correction", q)
             for i in idx:
                 pyro.sample(
                     f"y_conc_train_{i}",

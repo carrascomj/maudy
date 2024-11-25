@@ -15,11 +15,11 @@ def load_oos_model(trained_results: Path, oos_path: Path) -> Maudy:
     trained_maudy, _ = load(trained_results)
     state_dict = trained_maudy.state_dict()
     normalize = "decoder.loc_layer.0.bias" in state_dict
-    quench = "quench.0.0.bias" in state_dict
+    correct = "correct.0.0.bias" in state_dict
     maud_input = load_maud_input(str(oos_path))
     maud_input._maudy_config = load_maudy_config(oos_path)
-    print(f"{normalize=}; {quench=}")
-    oos_maudy = Maudy(maud_input, normalize, quench)
+    print(f"{normalize=}; {correct=}")
+    oos_maudy = Maudy(maud_input, normalize, correct)
     trained_maudy.experiments = oos_maudy.experiments
     trained_maudy.enzyme_concs_loc = oos_maudy.enzyme_concs_loc
     trained_maudy.enzyme_concs_scale = oos_maudy.enzyme_concs_scale
@@ -53,7 +53,7 @@ def oos(trained_output: Path, oos_model_path: Path, num_epochs: int = 800):
         "dgr",
         "flux",
         "ln_bal_conc",
-        "quench_correction",
+        "correction",
     )
     maudy = load_oos_model(trained_output, oos_model_path)
     samples = predict(maudy, num_epochs, var_names=var_names)

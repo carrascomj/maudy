@@ -1,4 +1,4 @@
-"""Functionality for preprocessing the quenching correction groups."""
+"""Functionality for preprocessing the conserved correction groups."""
 
 from typing import Optional
 

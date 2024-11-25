@@ -56,7 +56,7 @@ Use `maudy sample` to run inference:
 │ --normalize          --no-normalize               Whether to normalize input and output of NN [default: no-normalize]  │
 │ --out-dir                                PATH     [default: None]                                                      │
 │ --penalize-ss        --no-penalize-ss             [default: penalize-ss]                                               │
-│ --quench             --no-quench                  [default: no-quench]                                                 │
+│ --correct            --no-correct                 [default: no-correct]                                                │
 │ --eval-flux          --no-eval-flux               [default: eval-flux]                                                 │
 │ --eval-conc          --no-eval-conc               [default: eval-conc]                                                 │
 │ --smoke              --no-smoke                   [default: no-smoke]                                                  │
@@ -116,18 +116,19 @@ reac_dims = [512, 512, 512, 16]
 km_dims = [512, 1024, 512, 512, 256]
 ```
 
-### Quenching
+### Automatic observed metabolites correction
 
-As aforementioned, a `--quench` parameter can be supplied to the `maudy
-sample` command. If supplied, a quenching correctiong will applied to the
-balanced concentrations. This quenching correction is defined in the real line,
+As aforementioned, a `--correct` parameter can be supplied to the `maudy
+sample` command. If supplied, a correction will applied to the
+balanced concentrations. This can simulate quenching errors, extraction errors
+or systematic issues with the quantification of one or more metabolite. This correction is defined in the real line,
 where conserved moieities (specified in the `maudy_config` or automatically determined)
-are forced to preserve the concentration after quenching. The measurement
+are forced to preserve the concentration after correction. The measurement
 model of the fluxes and the steady-state deviation is computed using the
-balanced concentrations **without** quenching. The quenched-corrected
+balanced concentrations **without** correcting. The corrected
 balanced concentrations are used to compute only the measurement model of the
 concentrations (hypothesis: the observed concentration come from some learnable
-quenching error across conditions).
+error across conditions).
 
 ### Ferredoxin
 
@@ -176,12 +177,12 @@ distributions and plot them to generate figures, like
 First, run inference on a model _C. autoethanogenum_ autotrophic metabolism with only two of the three conditions:
 
 ```bash
-maudy sample examples/ci_aord_nosyn/ --num-epochs 100000 --annealing-stage 0.2 --normalize --quench
+maudy sample examples/ci_aord_nosyn/ --num-epochs 100000 --annealing-stage 0.2 --normalize --correct
 ```
-(Alternatively, the model can be run without the `--quench` parameter to remove the quenching correction.)
+(Alternatively, the model can be run without the `--correct` parameter to remove the correction.)
 
 Again, the result directory must be renamed, in this case to `../results/cauto_results_three_cond_quench_nn_nosyngas`.
-For the analysis of out-of-sample predictions of the quenched model,
+For the analysis of out-of-sample predictions of the corrected model,
 see [`notebooks/anamaudy_cauto_oos_quench.ipynb`](notebooks/anamaudy_cauto_oos_quench.ipynb).
 
 ![OOS conc example](./assets/oos_conc_examples.png)

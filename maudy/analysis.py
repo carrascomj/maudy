@@ -24,8 +24,8 @@ def load(model_output: Path):
     # hack, if normalize was not applied, the decoder has a plain FF layer
     # otherwise, a sequential where the first element is the layer
     normalize = "decoder.loc_layer.0.bias" in state_dict["maudy"]
-    quench = "quench.0.0.bias" in state_dict["maudy"]
-    maudy = Maudy(maud_input, normalize, quench)
+    correct = "correct.0.0.bias" in state_dict["maudy"]
+    maudy = Maudy(maud_input, normalize, correct)
     maudy.load_state_dict(state_dict["maudy"])
     pyro.get_param_store().load(str(model_output / "model_params.pt"), map_location="cpu")
     optimizer = ClippedAdam({"lr": 0.006})
@@ -134,8 +134,8 @@ def ppc(model_output: Path, num_epochs: int = 800):
     )
     maudy, _ = load(model_output)
     maudy.to_double()
-    if maudy.should_quench:
-        var_names = var_names + ("quench_correction")
+    if maudy.should_correct:
+        var_names = var_names + ("correction",)
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)
     if "flux" in samples:
