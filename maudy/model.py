@@ -664,6 +664,8 @@ class Maudy(nn.Module):
             "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
         )
         sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(self.float_tensor([2.5]), self.float_tensor([1.5])))
+        if self.should_correct:
+            k = pyro.sample("k", dist.LogNormal(self.float_tensor([1.0]), self.float_tensor([0.5])))
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -825,7 +827,7 @@ class Maudy(nn.Module):
                     dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
                 )
                 ssd_after_q = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
-                q = torch.sigmoid(ssd_after_q.abs() - ssd.abs()) * q
+                q = torch.sigmoid(k * (ssd_after_q.abs() - ssd.abs())) * q
                 conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
             # annotate final corrrection
             pyro.deterministic("correction", q)
@@ -925,6 +927,11 @@ class Maudy(nn.Module):
         sigma_latent_loc = pyro.param("sigma_latent_loc", self.float_tensor([2.5]), constraint=dist.constraints.positive)
         sigma_latent_scale = pyro.param("sigma_latent_scale", self.float_tensor([1.5]), constraint=dist.constraints.positive)
         sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
+        if self.should_correct:
+            # steepness of the correction sigmoid
+            k_loc = pyro.param("k_loc", self.float_tensor([1.0]))
+            k_scale = pyro.param("k_scale", self.float_tensor([0.5]), constraint=dist.constraints.positive)
+            pyro.sample("k", dist.LogNormal(k_loc, k_scale))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
