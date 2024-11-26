@@ -34,34 +34,6 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
-def get_factor_for_ssd(obs_conc_mask: torch.Tensor, obs_conc: torch.Tensor):
-    """Calculate SSD factor based on a high log probability within the concentrations.
-
-    The maximum of the log-probability is when the posterior mean is the log of
-    the observation. We arbitrarily set the scale to a small value 0.05.
-
-    Returns
-    -------
-    torch.Tensor: [num_experiments]
-    """
-    sigma_upper = torch.tensor(0.05)
-
-    ssdx_mults = [
-        dist.LogNormal(obs_conc_i[mask].log(), sigma_upper).log_prob(obs_conc_i[mask]).sum()
-        if mask.any() else torch.tensor([float("nan")])
-        for obs_conc_i, mask in zip(obs_conc, obs_conc_mask)
-    ]
-    ssds_of_observed_experiments = [x for x in ssdx_mults if not torch.isnan(x).all()]
-    mean_per_experiment = (
-        torch.mean(torch.stack(ssds_of_observed_experiments))
-        if ssds_of_observed_experiments
-        else torch.tensor([1000.0])
-    )
-    return torch.stack(
-        [mean_per_experiment if torch.isnan(x) else x for x in ssdx_mults]
-    )
-
-
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, normalize: bool = False, correct: bool = False):
         """Initialize the priors of the model.
@@ -420,7 +392,6 @@ class Maudy(nn.Module):
             [i for exp in idx for i in exp],
         )
         self.obs_conc_mask = ~torch.isnan(self.obs_conc_std)
-        self.ssd_mult = get_factor_for_ssd(self.obs_conc_mask, self.obs_conc)
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
@@ -694,9 +665,17 @@ class Maudy(nn.Module):
         )
         sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(self.float_tensor([2.5]), self.float_tensor([1.5])))
         # learnable parameter of the steady-state deviation penalty
-        lambda_penalty = pyro.param("lambda_penalty", self.float_tensor([1.0]), constraint=Positive)
         if self.should_correct:
-            k = pyro.sample("k", dist.LogNormal(self.float_tensor([1.0]), self.float_tensor([0.5])))
+            hyper_σ_correction = pyro.sample(
+                "hyper_σ_correction",
+                dist.LogNormal(
+                    self.float_tensor(0.0).expand(self.correct_output), self.float_tensor(0.1).expand(self.correct_output)
+                ).to_event(1)
+            )  # for each unconserved balanced metabolite
+            if len(hyper_σ_correction.shape) == 1:
+                # this should always happen but there is a bug in pyro.Predict
+                # that sometimes creates extra dimensions
+                hyper_σ_correction = hyper_σ_correction.unsqueeze(0)
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -847,21 +826,30 @@ class Maudy(nn.Module):
             )
             # corrected concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-            q = self.normalize_correction(self.correct(ln_bal_conc), ln_bal_conc)
+            if self.should_correct:
+                σ_correction = pyro.sample(
+                    "σ_correction",
+                    dist.LogNormal(
+                        loc=hyper_σ_correction.log().expand(len(self.experiments), -1),
+                        scale=self.float_tensor(0.1).expand(len(self.experiments), self.correct_output)
+                    ).to_event(1)
+                )
+                correction_shared = pyro.sample(
+                    "correction_shared",
+                    dist.Normal(
+                        torch.zeros(
+                            (len(self.experiments), self.correct_output),
+                            device=kcat.device,
+                            dtype=kcat.dtype,
+                        ),
+                        σ_correction,
+                    ).to_event(1),
+                )
+            q = self.normalize_correction(correction_shared if self.should_correct else None, ln_bal_conc)
+            pyro.deterministic("correction", q)
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
-            if self.should_correct:
-                # scale correction by the increase in SSD
-                all_flux_q = compute_flux(
-                    self,
-                    (torch.cat([conc_comp, fdx_ratio.log()], dim=1) if self.has_fdx else conc_comp).exp(), km, ki if self.has_ci else 0, kcat, enzyme_conc,
-                    dgr, psi, tc if self.has_allostery else 0, dc if self.has_allostery else 0, kcat_drain, 1e-9
-                )
-                ssd_after_q = all_flux_q @ self.S.T[:, self.balanced_mics_idx]
-                q = torch.sigmoid(k * (ssd_after_q.abs() - ssd.abs())) * q
-                conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
             # annotate final corrrection
-            pyro.deterministic("correction", q)
             for i in idx:
                 pyro.sample(
                     f"y_conc_train_{i}",
@@ -876,7 +864,7 @@ class Maudy(nn.Module):
                     "ssd_factor",
                     # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
                     # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
-                    -lambda_penalty * (ssd.pow(2) / (conc[:, self.balanced_mics_idx].sqrt() + 1e-12)).sum(),
+                    -1000.0 * ssd.pow(2).sum(dim=-1),
                     # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
                     event_dim=1,
                 )
@@ -959,10 +947,21 @@ class Maudy(nn.Module):
         sigma_latent_scale = pyro.param("sigma_latent_scale", self.float_tensor([1.5]), constraint=dist.constraints.positive)
         sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
         if self.should_correct:
-            # steepness of the correction sigmoid
-            k_loc = pyro.param("k_loc", self.float_tensor([1.0]))
-            k_scale = pyro.param("k_scale", self.float_tensor([0.5]), constraint=dist.constraints.positive)
-            pyro.sample("k", dist.LogNormal(k_loc, k_scale))
+            # hyperarchical prior for each metabolite for the correction scale
+            num_mets = self.correct_output
+            hyper_σ_loc = pyro.param(
+                "σ_metabolite_loc",
+                self.float_tensor(0.0).expand(num_mets),
+            )
+            hyper_σ_scale = pyro.param(
+                "σ_metabolite_scale",
+                self.float_tensor(0.1).expand(num_mets),
+                constraint=Positive
+            )
+            hyper_σ_correction = pyro.sample(
+                "hyper_σ_correction",
+                dist.LogNormal(hyper_σ_loc, hyper_σ_scale).to_event(1)
+            )  # for each unconserved balanced metabolite
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
@@ -1031,6 +1030,20 @@ class Maudy(nn.Module):
                 fdx_ratio = pyro.sample(
                     "fdx_ratio", dist.LogNormal(fdx_ratio, 0.1).to_event(1)
                 )
+            if self.should_correct:
+                sigma_correction_scale_param = pyro.param(
+                    "σ_correction_scale_param",
+                    self.float_tensor(0.1),
+                    constraint=dist.constraints.positive
+                )
+                σ_correction = pyro.sample(
+                    "σ_correction",
+                    dist.LogNormal(
+                        loc=hyper_σ_correction.log().unsqueeze(0).expand(len(self.experiments), -1),
+                        scale=sigma_correction_scale_param.expand(len(self.experiments), self.correct_output)
+                    ).to_event(1)
+                )  # Shape: [num_experiments, num_mets]
+                pyro.sample("correction_shared", dist.Normal(self.correct(latent_bal_conc_loc), σ_correction).to_event(1))
 
     def print_inputs(self):
         print(
