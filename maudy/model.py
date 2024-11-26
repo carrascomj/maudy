@@ -34,6 +34,32 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
+def get_factor_for_ssd(obs_conc_mask: torch.Tensor, obs_conc: torch.Tensor):
+    """Calculate SSD factor based on a high log probability within the concentrations.
+    The maximum of the log-probability is when the posterior mean is the log of
+    the observation. We arbitrarily set the scale to a small value 0.05.
+    Returns
+    -------
+    torch.Tensor: [num_experiments]
+    """
+    sigma_upper = torch.tensor(0.05)
+
+    ssdx_mults = [
+        dist.LogNormal(obs_conc_i[mask].log(), sigma_upper).log_prob(obs_conc_i[mask]).sum()
+        if mask.any() else torch.tensor([float("nan")])
+        for obs_conc_i, mask in zip(obs_conc, obs_conc_mask)
+    ]
+    ssds_of_observed_experiments = [x for x in ssdx_mults if not torch.isnan(x).all()]
+    mean_per_experiment = (
+        torch.mean(torch.stack(ssds_of_observed_experiments))
+        if ssds_of_observed_experiments
+        else torch.tensor([1.0])
+    )
+    return torch.stack(
+        [mean_per_experiment if torch.isnan(x) else x for x in ssdx_mults]
+    ).abs()
+
+
 class Maudy(nn.Module):
     def __init__(self, maud_input: MaudInput, normalize: bool = False, correct: bool = False):
         """Initialize the priors of the model.
@@ -392,6 +418,7 @@ class Maudy(nn.Module):
             [i for exp in idx for i in exp],
         )
         self.obs_conc_mask = ~torch.isnan(self.obs_conc_std)
+        self.ssd_mult = get_factor_for_ssd(self.obs_conc_mask, self.obs_conc)
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
@@ -864,7 +891,7 @@ class Maudy(nn.Module):
                     "ssd_factor",
                     # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
                     # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
-                    -1000.0 * ssd.pow(2).sum(dim=-1),
+                    self.ssd_mult * (ssd / conc[:, self.balanced_mics_idx]).abs().sum(dim=-1),
                     # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
                     event_dim=1,
                 )
@@ -948,14 +975,13 @@ class Maudy(nn.Module):
         sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
         if self.should_correct:
             # hyperarchical prior for each metabolite for the correction scale
-            num_mets = self.correct_output
             hyper_σ_loc = pyro.param(
                 "σ_metabolite_loc",
-                self.float_tensor(0.0).expand(num_mets),
+                self.float_tensor(0.0).expand(self.correct_output),
             )
             hyper_σ_scale = pyro.param(
                 "σ_metabolite_scale",
-                self.float_tensor(0.1).expand(num_mets),
+                self.float_tensor(0.1).expand(self.correct_output),
                 constraint=Positive
             )
             hyper_σ_correction = pyro.sample(
