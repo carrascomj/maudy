@@ -876,7 +876,7 @@ class Maudy(nn.Module):
                     "ssd_factor",
                     # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
                     # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
-                    -lambda_penalty * self.ssd_mult * ssd.abs().clamp(1e-11, None).sum(dim=-1),
+                    -lambda_penalty * (ssd.pow(2) / (conc[:, self.balanced_mics_idx].sqrt() + 1e-12)).sum(),
                     # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
                     event_dim=1,
                 )
