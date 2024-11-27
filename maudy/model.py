@@ -13,7 +13,6 @@ from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
 from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
 from .kinetics import (
-    compute_flux,
     get_allostery,
     get_dgr,
     get_free_enzyme_ratio_denom,
@@ -891,7 +890,7 @@ class Maudy(nn.Module):
                     "ssd_factor",
                     # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
                     # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
-                    self.ssd_mult * (ssd / conc[:, self.balanced_mics_idx]).abs().sum(dim=-1),
+                    self.ssd_mult * (ssd / conc[:, self.balanced_mics_idx].detach()).abs().clamp(1e-4).sum(dim=-1),
                     # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
                     event_dim=1,
                 )
