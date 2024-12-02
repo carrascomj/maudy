@@ -921,10 +921,13 @@ class Maudy(nn.Module):
         train: bool = True,
     ):
         """Establish the variational distributions for SVI."""
-        pyro.module("maudy", self)
-        dgf_param_loc = pyro.param("dgf_loc", self.dgf_means)
+        pyro.module("concoder", self.concoder)
+        if isinstance(self.correct, nn.Module):
+            pyro.module("quench", self.correct)
+        dgf_param_loc = pyro.param("dgf_loc", lambda: self.dgf_means.clone())
+        dgf_param_cov = pyro.param("dgf_cov", lambda: self.dgf_cov.clone(), constraint=dist.constraints.lower_cholesky)
         dgf = pyro.sample(
-            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
+            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=dgf_param_cov)
         )
         fdx_contr_loc = pyro.param("fdx_contr_loc", self.float_tensor([77.0]))
         fdx_contr_scale = pyro.param(
@@ -935,13 +938,13 @@ class Maudy(nn.Module):
             if any(st != 0 for st in self.fdx_stoichiometry)
             else self.float_tensor([0.0])
         )
-        kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
-        kcat_param_scale = pyro.param("kcat_scale", self.kcat_scale, Positive)
+        kcat_param_loc = pyro.param("kcat_loc", lambda: self.kcat_loc.clone())
+        kcat_param_scale = pyro.param("kcat_scale", lambda: self.kcat_scale.clone(), Positive)
         kcat = pyro.sample(
             "kcat", dist.LogNormal(kcat_param_loc, kcat_param_scale).to_event(1)
         )
-        km_loc = pyro.param("km_loc", self.km_loc)
-        km_scale = pyro.param("km_scale", self.km_scale, Positive)
+        km_loc = pyro.param("km_loc", lambda: self.km_loc.clone())
+        km_scale = pyro.param("km_scale", lambda: self.km_scale.clone(), Positive)
         km = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
         dgr = get_dgr(
             self.S_enz,
@@ -952,15 +955,15 @@ class Maudy(nn.Module):
         )
         rest = self.float_tensor([])
         if self.has_ci:
-            ki_loc = pyro.param("ki_loc", self.ki_loc)
-            ki_scale = pyro.param("ki_scale", self.ki_scale, Positive)
+            ki_loc = pyro.param("ki_loc", lambda: self.ki_loc.clone())
+            ki_scale = pyro.param("ki_scale", lambda: self.ki_scale.clone(), Positive)
             ki = pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
             rest = ki
         if self.has_allostery:
-            dc_loc = pyro.param("dc_loc", self.dc_loc)
-            dc_scale = pyro.param("dc_scale", self.dc_scale, Positive)
-            tc_loc = pyro.param("tc_loc", self.tc_loc)
-            tc_scale = pyro.param("tc_scale", self.tc_scale, Positive)
+            dc_loc = pyro.param("dc_loc", lambda: self.dc_loc.clone())
+            dc_scale = pyro.param("dc_scale", lambda: self.dc_scale.clone(), Positive)
+            tc_loc = pyro.param("tc_loc", lambda: self.tc_loc.clone())
+            tc_scale = pyro.param("tc_scale", lambda: self.tc_scale.clone(), Positive)
             dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
@@ -989,10 +992,10 @@ class Maudy(nn.Module):
             )  # for each unconserved balanced metabolite
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
-                "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
+                "enzyme_concs_loc", lambda: self.enzyme_concs_loc.clone(), event_dim=1
             ) if train else self.enzyme_concs_loc
             enzyme_concs_param_scale = pyro.param(
-                "enzyme_concs_scale", lambda: self.enzyme_concs_scale, event_dim=1,
+                "enzyme_concs_scale", lambda: self.enzyme_concs_scale.clone(), event_dim=1,
                 constraint=Positive,
             ) if train else self.enzyme_concs_scale
             enz_conc = pyro.sample(
@@ -1001,9 +1004,9 @@ class Maudy(nn.Module):
                     enzyme_concs_param_loc, enzyme_concs_param_scale
                 ).to_event(1),
             )
-            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1) if train else self.drain_mean
+            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean.clone(), event_dim=1) if train else self.drain_mean
             drain_std = pyro.param(
-                "drain_std", lambda: self.drain_std, constraint=Positive, event_dim=1
+                "drain_std", lambda: self.drain_std.clone(), constraint=Positive, event_dim=1
             ) if train else self.drain_std
             kcat_drain = (
                 pyro.sample(
@@ -1015,7 +1018,7 @@ class Maudy(nn.Module):
             )
             unb_conc_param_loc = pyro.param(
                 "unb_conc_param_loc",
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
+                lambda: self.unb_conc_loc[:, self.non_optimized_unbalanced_idx].clone(),
                 event_dim=1,
             ) if train else self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
             concoder_output = self.concoder(
@@ -1036,10 +1039,10 @@ class Maudy(nn.Module):
             latent_bal_conc_loc = concoder_output.pop()
             unb_conc_scale = pyro.param(
                 "unb_conc_scale",
-                lambda: self.unb_conc_scale,
+                lambda: self.unb_conc_scale.clone(),
                 constraint=Positive,
                 event_dim=1,
-            ) if train else self.unb_conc_scale
+            ) if train else self.unb_conc_scale.clone()
             pyro.sample(
                 "unb_conc",
                 dist.LogNormal(
