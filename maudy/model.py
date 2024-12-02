@@ -11,7 +11,7 @@ import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
-from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder, BatchNorm, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -31,32 +31,6 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     sigma_sq = (scale.exp() - 1) * mu2
     loc = torch.log(mu.pow(2) / torch.sqrt(mu2 + sigma_sq.pow(2)))
     return loc
-
-
-def get_factor_for_ssd(obs_conc_mask: torch.Tensor, obs_conc: torch.Tensor):
-    """Calculate SSD factor based on a high log probability within the concentrations.
-    The maximum of the log-probability is when the posterior mean is the log of
-    the observation. We arbitrarily set the scale to a small value 0.05.
-    Returns
-    -------
-    torch.Tensor: [num_experiments]
-    """
-    sigma_upper = torch.tensor(0.05)
-
-    ssdx_mults = [
-        dist.LogNormal(obs_conc_i[mask].log(), sigma_upper).log_prob(obs_conc_i[mask]).sum()
-        if mask.any() else torch.tensor([float("nan")])
-        for obs_conc_i, mask in zip(obs_conc, obs_conc_mask)
-    ]
-    ssds_of_observed_experiments = [x for x in ssdx_mults if not torch.isnan(x).all()]
-    mean_per_experiment = (
-        torch.mean(torch.stack(ssds_of_observed_experiments))
-        if ssds_of_observed_experiments
-        else torch.tensor([1.0])
-    )
-    return torch.stack(
-        [mean_per_experiment if torch.isnan(x) else x for x in ssdx_mults]
-    ).abs()
 
 
 class Maudy(nn.Module):
@@ -417,7 +391,6 @@ class Maudy(nn.Module):
             [i for exp in idx for i in exp],
         )
         self.obs_conc_mask = ~torch.isnan(self.obs_conc_std)
-        self.ssd_mult = get_factor_for_ssd(self.obs_conc_mask, self.obs_conc)
         # Special case of ferredoxin: we want to add a per-experiment
         # concentration ratio parameter (output of NN) and the dGf difference
         self.fdx_stoichiometry = torch.zeros_like(self.water_stoichiometry)
@@ -443,7 +416,13 @@ class Maudy(nn.Module):
         # it does not explode
         all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
         min_max = (all_concs.min().item() - 3, all_concs.max().item() + 2) if normalize else None
-        self.init_latent = all_concs.mean().item()
+        init_latent_mean = all_concs.mean().item()
+        self.safexp = (lambda x: x.exp()) if min_max is None else lambda x: x.clamp(min_max[0], min_max[1]).exp()
+        self.init_latent = torch.where(
+            torch.isnan(self.obs_conc[:, self.balanced_mics_idx]),
+            init_latent_mean,
+            self.obs_conc[:, self.balanced_mics_idx].log()
+        )
         self.normalize = normalize
         self.decoder = BaseDecoder(
             met_dim=len(self.balanced_mics_idx),
@@ -504,7 +483,7 @@ class Maudy(nn.Module):
         if not correct
         else nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
+                nn.Sequential(nn.Linear(in_dim, out_dim), BatchNorm(out_dim), nn.ReLU())
                 for in_dim, out_dim in zip(
                     [correct_input] + nn_config.correction_dims, nn_config.correction_dims + [correct_output]
                 )
@@ -644,7 +623,7 @@ class Maudy(nn.Module):
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
-        pyro.module("maudy", self)
+        pyro.module("decoder", self.decoder)
 
         # experiment-indepedent variables
         kcat = pyro.sample(
@@ -727,7 +706,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.Normal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), sigma_latent).to_event(
+                    dist.Normal(self.init_latent, sigma_latent).to_event(
                         1
                     ),
                 )
@@ -737,7 +716,7 @@ class Maudy(nn.Module):
                 event_dim=1,
             )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = ln_bal_conc.exp()
+            conc[:, self.balanced_mics_idx] = self.safexp(ln_bal_conc)
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
@@ -847,7 +826,7 @@ class Maudy(nn.Module):
             )
             pyro.sample(
                 "y_flux_train",
-                dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
+                dist.Normal(true_obs_flux, self.obs_fluxes_std).to_event(1),
                 obs=obs_flux,
             )
             # corrected concentrations
@@ -872,41 +851,47 @@ class Maudy(nn.Module):
                     ).to_event(1),
                 )
             q = self.normalize_correction(correction_shared if self.should_correct else None, ln_bal_conc)
+            # annotate final corrrection
             pyro.deterministic("correction", q)
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - q
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
-            # annotate final corrrection
+            conc_log_prob = self.float_tensor([0.0])
             for i in idx:
                 pyro.sample(
                     f"y_conc_train_{i}",
                     dist.LogNormal(
                         conc_comp[i][self.obs_conc_mask[i]],
-                        self.obs_conc_std[i][self.obs_conc_mask[i]] / annealing_factor,
+                        self.obs_conc_std[i][self.obs_conc_mask[i]] * annealing_factor,
                     ).to_event(1),
                     obs=obs_conc[i][self.obs_conc_mask[i]] if obs_conc is not None else None,
                 )
-            if penalize_ss:
+                if obs_conc is not None:
+                    conc_log_prob += (
+                        dist.LogNormal(
+                            conc_comp[i][self.obs_conc_mask[i]],
+                            self.obs_conc_std[i][self.obs_conc_mask[i]] * annealing_factor,
+                        ).to_event(1).log_prob(obs_conc[i][self.obs_conc_mask[i]])
+                    )
+            if penalize_ss and annealing_factor > 0.5:
+                # as much as we can, do not make SSD a moving target
+                # denom = torch.where(
+                #     torch.isnan(self.obs_conc[:, self.balanced_mics_idx]),
+                #     conc[:, self.balanced_mics_idx].detach(),
+                #     self.obs_conc[:, self.balanced_mics_idx]
+                # )
                 ssd_factor = pyro.deterministic(
                     "ssd_factor",
-                    # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
-                    # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
-                    self.ssd_mult * (ssd / conc[:, self.balanced_mics_idx].detach()).abs().clamp(1e-4).sum(dim=-1),
-                    # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
+                    ssd.pow(2).clamp(1e-5).sum(dim=-1),
                     event_dim=1,
                 )
+                assert not torch.isnan(
+                    ssd_factor
+                ).any(), (f"NaN GENERATED\n=============\ndGf\n{dgf}\n=============\n[conc]"
+                f"\n=============\n{conc}\nlatent_bal_conc\n=============\n{latent_bal_conc}")
                 pyro.factor(
                     "steady_state_dev",
                      -ssd_factor.sum(dim=-1),
                 )
-                # ssd_factor = pyro.deterministic(
-                #     "ssd_factor",
-                #     ssd.abs() / (ln_bal_conc.exp() + 1e-13),
-                #     event_dim=1,
-                # )
-                # pyro.factor(
-                #     "steady_state_dev",
-                #     -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
-                # )
 
     def float_tensor(self, x) -> torch.Tensor:
         return torch.tensor(x, device=self.water_stoichiometry.device, dtype=self.water_stoichiometry.dtype)
