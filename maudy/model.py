@@ -665,6 +665,7 @@ class Maudy(nn.Module):
         psi = pyro.sample(
             "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
         )
+        sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(self.float_tensor([2.5]), self.float_tensor([1.5])))
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -690,7 +691,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
+                    dist.Normal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), sigma_latent).to_event(
                         1
                     ),
                 )
@@ -910,6 +911,9 @@ class Maudy(nn.Module):
         pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
+        sigma_latent_loc = pyro.param("sigma_latent_loc", self.float_tensor([2.5]), constraint=dist.constraints.positive)
+        sigma_latent_scale = pyro.param("sigma_latent_scale", self.float_tensor([1.5]), constraint=dist.constraints.positive)
+        pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
                 "enzyme_concs_loc", lambda: self.enzyme_concs_loc.clone(), event_dim=1
@@ -972,7 +976,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
+                    dist.Normal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
                 )
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
