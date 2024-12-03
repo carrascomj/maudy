@@ -482,7 +482,8 @@ class Maudy(nn.Module):
                 for in_dim, out_dim in zip(
                     [correct_input] + nn_config.correction_dims, nn_config.correction_dims + [correct_output]
                 )
-            ], nn.Linear(correct_output, correct_output)
+            # Softplus makes output positive; we let the SSD decide on the sign
+            ], nn.Linear(correct_output, correct_output), nn.Softplus()
         )
         )
         self.should_correct = correct
@@ -532,22 +533,26 @@ class Maudy(nn.Module):
         return correction_mask
 
 
-    def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor):
+    def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor, ssd: torch.Tensor):
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.correct_groups`, and the total
         quenching amount is scaled by a parameter `total` from the model.
+
+        We scale by the normalized ssd.
         """
         out = torch.zeros_like(ln_bal_conc)
         if not self.should_correct:
             return out
+        # correction is positive, ssd decides the strength and the sign
+        norm_ssd = (ssd - ssd.mean(dim=-1).unsqueeze(dim=-1)) / ssd.std(dim=-1).unsqueeze(dim=-1)
         q_index = 0
         epsilon = 1e-14
         for group_idx in self.correct_groups:
             indices_to_subtract = group_idx[:-1]
             num_indices = len(indices_to_subtract)
             sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
-            corrections = correction[:, q_index:q_index + num_indices]
+            corrections = correction[:, q_index:q_index + num_indices] / norm_ssd[:, indices_to_subtract]
             corrections = corrections.clamp(min=0)
             out[:, indices_to_subtract] = corrections
 
@@ -816,7 +821,12 @@ class Maudy(nn.Module):
             )
             # corrected concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-            correction = pyro.deterministic("correction", self.normalize_correction(self.correct(ln_bal_conc) if self.should_correct else None, ln_bal_conc))
+            correction = pyro.deterministic(
+                "correction",
+                self.normalize_correction(
+                    self.correct(ln_bal_conc) if self.should_correct else None, ln_bal_conc, ssd
+                ),
+            )
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
