@@ -11,7 +11,7 @@ import torch.nn as nn
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
-from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder, BatchNorm, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -478,7 +478,7 @@ class Maudy(nn.Module):
         if not correct
         else nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), Norm(out_dim), nn.ReLU())
+                nn.Sequential(nn.Linear(in_dim, out_dim), BatchNorm(out_dim), nn.ReLU())
                 for in_dim, out_dim in zip(
                     [correct_input] + nn_config.correction_dims, nn_config.correction_dims + [correct_output]
                 )
