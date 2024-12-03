@@ -56,8 +56,8 @@ def train(
     if not eval_conc:
         obs_conc = None
 
-    lr_start = 3e-4
-    lr_end = 8e-5
+    lr_start = 3e-3
+    lr_end = 8e-6
     optimizer = PyroOptim(
         ClippedAdam,
         optim_args={"lrd": (lr_end / lr_start) ** (1 / num_epochs), "lr": lr_start},
