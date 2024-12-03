@@ -53,9 +53,11 @@ def oos(trained_output: Path, oos_model_path: Path, num_epochs: int = 800):
         "dgr",
         "flux",
         "ln_bal_conc",
-        "correction",
     )
     maudy = load_oos_model(trained_output, oos_model_path)
+    maudy.to_double()
+    if maudy.should_correct:
+        var_names = var_names + ("correction",)
     samples = predict(maudy, num_epochs, var_names=var_names)
     samples["ssd"] = samples["ssd"].squeeze(1)
     if "flux" in samples:

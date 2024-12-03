@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 
-class BatchNorm(nn.Module):
+class Norm(nn.Module):
     """Wrapper to take into account cases where Batch dimension is 1."""
     def __init__(self, in_dim):
         super().__init__()
@@ -25,17 +25,6 @@ class Clamp(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x.clamp(self.min_val, self.max_val)
-
-
-class TanhScale(nn.Module):
-    def __init__(self, min_val: float, max_val: float):
-        super().__init__()
-        self.min_val = min_val
-        self.max_val = max_val
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = torch.tanh(x)
-        return self.min_val + (self.max_val - self.min_val) * (x + 1) / 2
 
 
 class BaseConcCoder(nn.Module):
@@ -89,16 +78,29 @@ class BaseConcCoder(nn.Module):
                     *[
                         nn.Sequential(
                             nn.Linear(in_dim, out_dim),
-                            BatchNorm(out_dim) if batchnorm else nn.Identity(),
+                            Norm(out_dim) if batchnorm else nn.Identity(),
                             nn.ReLU(),
                             nn.Dropout1d() if drop_out else nn.Identity(),
                         )
                         for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
                     ],
                     nn.Linear(out_dims[-1], out_dims[-1]),
-                    TanhScale(normalize[0], normalize[1])
+                    Clamp(normalize[0], normalize[1])
                     if normalize is not None
                     else nn.Identity(),
+                ),
+                nn.Sequential(  # scale layer
+                    *[
+                        nn.Sequential(
+                            nn.Linear(in_dim, out_dim),
+                            Norm(out_dim) if batchnorm else nn.Identity(),
+                            nn.ReLU(),
+                            nn.Dropout1d() if drop_out else nn.Identity(),
+                        )
+                        for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
+                    ],
+                    nn.Linear(out_dims[-1], out_dims[-1]),
+                    nn.Softplus(),  # makes the output positive
                 ),
             ],
         )
@@ -130,7 +132,7 @@ class BaseConcCoder(nn.Module):
         if self.normalize:
             enz_conc, drains, kcat, km, rest = (
                 enz_conc.log(),
-                drains * 1e3,
+                drains * 1e6,
                 kcat.log(),
                 km.log(),
                 rest.log(),
@@ -141,7 +143,7 @@ class BaseConcCoder(nn.Module):
         constant_in = torch.cat([dgr, kcat, km, rest.flatten()])
         constant_q = self.constant_backbone(constant_in)
         if obs_flux is not None:
-            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux * 1e3), dim=-1))
+            k = self.emb_layer(torch.cat((conc, reac_in, obs_flux * 1e6), dim=-1))
         else:
             k = self.emb_layer(torch.cat((conc, reac_in), dim=-1))
         out = k * constant_q.unsqueeze(0)
@@ -183,12 +185,11 @@ class BaseDecoder(nn.Module):
         super().__init__()
         layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
         self.normalize = normalize is not None
-        self.loc_layer = layer
-        # self.loc_layer = (
-        #     nn.Sequential(layer, Clamp(normalize[0], normalize[1]))
-        #     if normalize is not None
-        #     else layer
-        # )
+        self.loc_layer = (
+            nn.Sequential(layer, Clamp(normalize[0], normalize[1]))
+            if normalize is not None
+            else layer
+        )
 
     def forward(
         self,
@@ -198,6 +199,6 @@ class BaseDecoder(nn.Module):
         drain: torch.Tensor,
     ):
         if self.normalize:
-            unb, enz, drain = unb.log(), enz.log(), drain * 1e3
+            met, unb, enz, drain = met.log(), unb.log(), enz.log(), drain * 1e6
         features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)
