@@ -482,8 +482,7 @@ class Maudy(nn.Module):
                 for in_dim, out_dim in zip(
                     [correct_input] + nn_config.correction_dims, nn_config.correction_dims + [correct_output]
                 )
-            # Softplus makes output positive; we let the SSD decide on the sign
-            ], nn.Linear(correct_output, correct_output), nn.Softplus()
+            ], nn.Linear(correct_output, correct_output)
         )
         )
         self.should_correct = correct
@@ -544,8 +543,8 @@ class Maudy(nn.Module):
         out = torch.zeros_like(ln_bal_conc)
         if not self.should_correct:
             return out
-        # correction is positive, ssd decides the strength and the sign
-        norm_ssd = ssd / ssd.sum(dim=-1).unsqueeze(dim=-1)  # ∑ = 1
+        # ssd decides the strength of the correction
+        norm_ssd = (ssd / ssd.sum(dim=-1).unsqueeze(dim=-1)).abs()
         q_index = 0
         epsilon = 1e-14
         for group_idx in self.correct_groups:
