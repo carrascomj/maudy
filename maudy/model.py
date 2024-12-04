@@ -532,7 +532,7 @@ class Maudy(nn.Module):
         return correction_mask
 
 
-    def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor, ssd: torch.Tensor):
+    def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor, annealing_factor: float):
         """Gets quenching correction (if `self.quench` is True).
 
         Mass conservation is forced through `self.correct_groups`, and the total
@@ -541,17 +541,15 @@ class Maudy(nn.Module):
         We scale by the normalized ssd.
         """
         out = torch.zeros_like(ln_bal_conc)
-        if not self.should_correct:
+        if not self.should_correct or annealing_factor < 1:
             return out
-        # ssd decides the strength of the correction
-        norm_ssd = (ssd / ssd.sum(dim=-1).unsqueeze(dim=-1)).abs()
         q_index = 0
         epsilon = 1e-14
         for group_idx in self.correct_groups:
             indices_to_subtract = group_idx[:-1]
             num_indices = len(indices_to_subtract)
             sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
-            corrections = correction[:, q_index:q_index + num_indices] / norm_ssd[:, indices_to_subtract]
+            corrections = correction[:, q_index:q_index + num_indices]
             corrections = corrections.clamp(min=0)
             out[:, indices_to_subtract] = corrections
 
@@ -823,7 +821,7 @@ class Maudy(nn.Module):
             correction = pyro.deterministic(
                 "correction",
                 self.normalize_correction(
-                    self.correct(ln_bal_conc) if self.should_correct else None, ln_bal_conc, ssd
+                    self.correct(ln_bal_conc) if self.should_correct else None, ln_bal_conc, annealing_factor
                 ),
             )
             conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - correction
