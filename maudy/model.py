@@ -545,7 +545,7 @@ class Maudy(nn.Module):
         if not self.should_correct:
             return out
         # correction is positive, ssd decides the strength and the sign
-        norm_ssd = (ssd - ssd.mean(dim=-1).unsqueeze(dim=-1)) / ssd.std(dim=-1).unsqueeze(dim=-1)
+        norm_ssd = ssd / ssd.sum(dim=-1).unsqueeze(dim=-1)  # ∑ = 1
         q_index = 0
         epsilon = 1e-14
         for group_idx in self.correct_groups:
