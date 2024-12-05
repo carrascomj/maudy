@@ -10,7 +10,7 @@ from typing import Annotated, Optional
 
 import pyro
 import torch
-from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
+from pyro.infer import SVI, TraceGraph_ELBO, config_enumerate
 from pyro.optim.clipped_adam import ClippedAdam
 from pyro.optim import PyroOptim
 from tqdm import tqdm
@@ -35,7 +35,7 @@ def train(
     maud_input: MaudInput,
     num_epochs: int,
     penalize_ss: bool,
-    quench: bool,
+    correct: bool,
     eval_flux: bool,
     eval_conc: bool,
     annealing_epochs: int,
@@ -46,7 +46,8 @@ def train(
     pyro.enable_validation(False)
 
     # Instantiate instance of model/guide and various neural networks
-    maudy = Maudy(maud_input, normalize, quench)
+    maudy = Maudy(maud_input, normalize, correct)
+    maudy.to_double()
     if torch.cuda.is_available():
         maudy.cuda()
     obs_flux, obs_conc = maudy.get_obs()
@@ -55,8 +56,8 @@ def train(
     if not eval_conc:
         obs_conc = None
 
-    lr_start = 3e-4
-    lr_end = 8e-5
+    lr_start = 3e-3
+    lr_end = 8e-6
     optimizer = PyroOptim(
         ClippedAdam,
         optim_args={"lrd": (lr_end / lr_start) ** (1 / num_epochs), "lr": lr_start},
@@ -66,9 +67,7 @@ def train(
     guide = config_enumerate(maudy.guide, "parallel", expand=True)
 
     # Setup a variational objective for gradient-based learning.
-    # Note we use TraceEnum_ELBO in order to leverage Pyro's machinery
-    # for automatic enumeration of the discrete latent variable y.
-    elbo = TraceEnum_ELBO(strict_enumeration_warning=False)
+    elbo = TraceGraph_ELBO(strict_enumeration_warning=False)
     svi = SVI(maudy.model, guide, optimizer, elbo)
 
     progress_bar = tqdm(range(num_epochs), desc="Training", unit="epoch")
@@ -91,7 +90,7 @@ def sample(
     normalize: Annotated[bool, Option(help="Whether to normalize input and output of NN")] = False,
     out_dir: Optional[Path] = None,
     penalize_ss: bool = True,
-    quench: bool = False,
+    correct: bool = False,
     eval_flux: bool = True,
     eval_conc: bool = True,
     smoke: bool = False,
@@ -101,18 +100,19 @@ def sample(
         warnings.warn("Running smoke test but `--out-dir` was specified!")
     maud_input = load_maud_input(str(maud_dir))
     maud_input._maudy_config = load_maudy_config(maud_dir)
-    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, quench, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
-    if smoke:
-        return
     out = (
         out_dir
         if out_dir is not None
         else Path(f"maudyout_{maud_input.config.name}_{get_timestamp()}")
     )
-    os.mkdir(out)
+    if not smoke:
+        os.mkdir(out)
+        shutil.copytree(maud_dir, out / "user_input")
+    maudy, optimizer = train(maud_input, num_epochs, penalize_ss, correct, eval_flux, eval_conc, int(num_epochs * annealing_stage), normalize)
+    if smoke:
+        return
     torch.save(
         {"maudy": maudy.state_dict(), "optimizer": optimizer.get_state()},
         out / "model.pt",
     )
     pyro.get_param_store().save(str(out / "model_params.pt"))
-    shutil.copytree(maud_dir, out / "user_input")

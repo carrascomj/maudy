@@ -12,6 +12,7 @@ metabolite_in_compartment = [
 enzyme_reaction = [
   {enzyme_id = "r1", reaction_id = "r1"},
   {enzyme_id = "r2A", reaction_id = "r2"},
+  {enzyme_id = "r2B", reaction_id = "r2B"},
   {enzyme_id = "r3", reaction_id = "r3"},
   {enzyme_id = "r4", reaction_id = "r4"},
 ]
@@ -41,6 +42,10 @@ id = 'r2A'
 name = 'Isoenzyme A that catalyses reaction r2'
 
 [[enzyme]]
+id = 'r2B'
+name = 'Isoenzyme B that catalyses reaction r2'
+
+[[enzyme]]
 id = 'r3'
 name = 'the enzyme that catalyses reaction r3'
 
@@ -57,6 +62,12 @@ mechanism = "reversible_michaelis_menten"
 [[reaction]]
 id = "r2"
 name = "reaction number 2"
+stoichiometry = {A_c = -1, C_c = 1}
+mechanism = "reversible_michaelis_menten"
+
+[[reaction]]
+id = "r2B"
+name = "reaction number 2, isozyme B"
 stoichiometry = {A_c = -1, C_c = 1}
 mechanism = "reversible_michaelis_menten"
 
@@ -81,5 +92,11 @@ compartment_id = "c"
 [[allostery]]
 modification_type = "activation"
 enzyme_id = "r2A"
+metabolite_id = "C"
+compartment_id = "c"
+
+[[allostery]]
+modification_type = "inhibition"
+enzyme_id = "r2B"
 metabolite_id = "C"
 compartment_id = "c"

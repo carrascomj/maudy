@@ -55,7 +55,7 @@ def get_free_enzyme_ratio_denom(
             ((1.0 + (conc[:, conc_idx] / km[..., km_idx])) ** st).prod(dim=-1) - 1.0
             if km_idx.size(0)
             else torch.zeros(
-                conc.shape[0], device=conc.device
+                conc.shape[0], device=conc.device, dtype=conc.dtype,
             )  # if irr: no km for prods: no prod_contr
             for conc_idx, km_idx, st in zip(prod_conc_idx, prod_km_idx, product_S)
         ],
@@ -89,7 +89,7 @@ def get_reversibility(
     irr: Vector, rt: float = RT
 ) -> Vector:
     """Add the membrane potential to dgr and compute reversibility."""
-    rev = torch.ones((conc.shape[0], dgr.shape[0]), device=dgr.device)
+    rev = torch.ones((conc.shape[0], dgr.shape[0]), device=dgr.device, dtype=dgr.dtype)
     rev[:, irr] = 1 - torch.exp(
         (
             dgr[irr].unsqueeze(0)
@@ -122,7 +122,7 @@ def get_kinetic_multi_drain(
                 ** st
             ).prod(dim=-1)
             if conc_idx.size(0)
-            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device)
+            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device, dtype=kcat_drain.dtype)
             for conc_idx, st in zip(sub_conc_idx, substrate_S)
         ],
         dim=1,
@@ -134,7 +134,7 @@ def get_kinetic_multi_drain(
                 ** st
             ).prod(dim=-1)
             if conc_idx.size(0)
-            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device)
+            else torch.ones(kcat_drain.shape[0], device=kcat_drain.device, dtype=kcat_drain.dtype)
             for conc_idx, st in zip(prod_conc_idx, product_S)
         ],
         dim=1,
@@ -191,9 +191,13 @@ def compute_flux(
     """Compute all the flux terms."""
     free_enz_km_denom = get_free_enzyme_ratio_denom(
         conc, km,
-        model.sub_conc_idx, model.sub_km_idx,
-        model.prod_conc_idx, model.prod_km_idx,
-        model.substrate_S, model.product_S,
+        model.sub_conc_idx,
+        model.sub_km_idx,
+        model.prod_conc_idx,
+        model.prod_km_idx,
+        model.substrate_S,
+        model.product_S,
+        model.irreversible,
     )
     free_enz_ki_denom = get_competitive_inhibition_denom(
         conc, ki, model.ki_conc_idx, model.ki_idx
@@ -201,18 +205,26 @@ def compute_flux(
     free_enzyme_ratio = 1 / (free_enz_km_denom + free_enz_ki_denom)
     vmax = get_vmax(kcat, enz_conc)
     rev = get_reversibility(
-        model.S_enz_thermo, dgr, conc, model.transported_charge, psi
+        model.S_enz_thermo, dgr, conc, model.transported_charge, psi, model.irreversible,
+        model.rt
     )
     sat = get_saturation(
         conc, km, free_enzyme_ratio, model.sub_conc_idx, model.sub_km_idx
     )
     allostery = (
         get_allostery(
-            conc, free_enzyme_ratio,
+            conc,
+            free_enzyme_ratio,
             tc,
             dc,
-            model.allostery_activation, model.allostery_idx,
-            model.conc_allostery_idx, model.subunits,
+            model.allostery_reaction_idx,
+            model.d_to_reac_act,
+            model.d_to_reac_inh,
+            model.q_to_reac_act,
+            model.q_to_reac_inh,
+            model.conc_allostery_idx,
+            model.tc_idx,
+            model.subunits,
         )
         if model.has_allostery
         else torch.ones_like(vmax)

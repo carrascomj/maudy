@@ -1,5 +1,5 @@
 # optimize_unbalanced_metabolites = ["pi_c", "atp_c", "adp_c", "coa_c"]
-quenching_groups = [["nad_c", "nadh_c"], ["nadp_c", "nadph_c"]]
+correction_groups = [["nad_c", "nadh_c"], ["nadp_c", "nadph_c"]]
 
 [ferredoxin]
 hyt = -1

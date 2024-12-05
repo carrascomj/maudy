@@ -5,9 +5,16 @@ import torch
 import torch.nn as nn
 
 
-class Norm(nn.Module):
+class BatchNorm(nn.Module):
+    """Wrapper to take into account cases where Batch dimension is 1."""
+    def __init__(self, in_dim):
+        super().__init__()
+        self.batch_norm = nn.BatchNorm1d(in_dim)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return (x - x.mean(dim=-1).unsqueeze(1)) / torch.sqrt(x.var(dim=-1).unsqueeze(1) + 1e-12)
+        if x.shape[0] <= 1:
+            return x
+        return self.batch_norm(x)
 
 
 class Clamp(nn.Module):
@@ -18,6 +25,17 @@ class Clamp(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x.clamp(self.min_val, self.max_val)
+
+
+class TanhScale(nn.Module):
+    def __init__(self, min_val: float, max_val: float):
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = torch.tanh(x)
+        return self.min_val + (self.max_val - self.min_val) * (x + 1) / 2
 
 
 class BaseConcCoder(nn.Module):
@@ -71,14 +89,14 @@ class BaseConcCoder(nn.Module):
                     *[
                         nn.Sequential(
                             nn.Linear(in_dim, out_dim),
-                            Norm() if batchnorm else nn.Identity(),
+                            BatchNorm(out_dim) if batchnorm else nn.Identity(),
                             nn.ReLU(),
                             nn.Dropout1d() if drop_out else nn.Identity(),
                         )
                         for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
                     ],
                     nn.Linear(out_dims[-1], out_dims[-1]),
-                    Clamp(normalize[0], normalize[1])
+                    TanhScale(normalize[0], normalize[1])
                     if normalize is not None
                     else nn.Identity(),
                 ),
@@ -86,7 +104,7 @@ class BaseConcCoder(nn.Module):
                     *[
                         nn.Sequential(
                             nn.Linear(in_dim, out_dim),
-                            Norm() if batchnorm else nn.Identity(),
+                            BatchNorm(out_dim) if batchnorm else nn.Identity(),
                             nn.ReLU(),
                             nn.Dropout1d() if drop_out else nn.Identity(),
                         )
@@ -178,11 +196,12 @@ class BaseDecoder(nn.Module):
         super().__init__()
         layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
         self.normalize = normalize is not None
-        self.loc_layer = (
-            nn.Sequential(layer, Clamp(normalize[0], normalize[1]))
-            if normalize is not None
-            else layer
-        )
+        self.loc_layer = layer
+        # self.loc_layer = (
+        #     nn.Sequential(layer, Clamp(normalize[0], normalize[1]))
+        #     if normalize is not None
+        #     else layer
+        # )
 
     def forward(
         self,
@@ -192,6 +211,6 @@ class BaseDecoder(nn.Module):
         drain: torch.Tensor,
     ):
         if self.normalize:
-            met, unb, enz, drain = met.log(), unb.log(), enz.log(), drain * 1e6
+            unb, enz, drain = unb.log(), enz.log(), drain * 1e3
         features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)

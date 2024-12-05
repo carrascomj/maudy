@@ -1,19 +1,17 @@
 from collections import defaultdict
 from copy import deepcopy
 from typing import Optional
-from warnings import warn
-from maudy.quench_preprocessing import extract_conserved_moiety_matrix
+from maudy.precorrection import extract_conserved_moiety_matrix
 
 import pandas as pd
 import pyro
 import pyro.distributions as dist
 import torch
 import torch.nn as nn
-from torch.nn.functional import softmax
 from maud.data_model.maud_input import MaudInput
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.kinetic_model import ReactionMechanism
-from .black_box import BaseConcCoder, BaseDecoder, Norm, fdx_head, unb_opt_head
+from .black_box import BaseConcCoder, BaseDecoder, BatchNorm, fdx_head, unb_opt_head
 from .kinetics import (
     get_allostery,
     get_dgr,
@@ -35,13 +33,8 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
     return loc
 
 
-def dgf_water_from_temperature(temp: float) -> float:
-    """Solve ΔH - T ΔS approximately for verifying inputs."""
-    return 204.4382 - (temp * 1.1918)
-
-
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput, normalize: bool = False, quench: bool = False):
+    def __init__(self, maud_input: MaudInput, normalize: bool = False, correct: bool = False):
         """Initialize the priors of the model.
 
         maud_input: MaudInput
@@ -57,7 +50,7 @@ class Maudy(nn.Module):
             and drains and fluxes are multiplied by 1e6 (mumol). The output is
             clamped between 0.6 orders of magnitude of the higher and lowest
             observed or prior concentrations.
-        quench: bool, default=False
+        correction: bool, default=False
             whether to add a model that learns a transformation from steady
             state concentrations - that fits the SSD and fluxes - to observed
             concentrations.
@@ -68,10 +61,6 @@ class Maudy(nn.Module):
         self.temperature = maud_input._maudy_config.temperature
         self.dgf_water = maud_input._maudy_config.dgf_water
         self.rt = self.temperature * 0.008314
-        if abs(abs(dgf_water_from_temperature(self.temperature)) - abs(self.dgf_water)) > 2:
-            warn(f"Input T {self.temperature} and ΔG_water {self.dgf_water} do "
-                 "not seem to match the approximate relationship. If T is "
-                 "supplied, ΔG_water must also be specified!")
 
         # 1. kcats
         kcat_pars = self.maud_params.kcat.prior
@@ -427,6 +416,7 @@ class Maudy(nn.Module):
         # it does not explode
         all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
         min_max = (all_concs.min().item() - 3, all_concs.max().item() + 2) if normalize else None
+        self.safexp = (lambda x: x.exp()) if min_max is None else lambda x: x.clamp(min_max[0], min_max[1]).exp()
         self.init_latent = all_concs.mean().item()
         self.normalize = normalize
         self.decoder = BaseDecoder(
@@ -461,42 +451,49 @@ class Maudy(nn.Module):
             unb_opt_head(nn_encoder, unb_dim=self.optimized_unbalanced_idx.shape[-1])
         self.concoder = nn_encoder
         met_dim = len(self.balanced_mics_idx)
-        # users-defined groups that are quenched with opposing parameters
-        quenching_groups = maud_input._maudy_config.quenching_groups
-        quenching_groups = quenching_groups if quenching_groups else self.group_quenching_by_moieties()
-        self.quenching_groups_named = quenching_groups
-        self.quench_groups = (
+        # users-defined groups that are corrected with opposing parameters
+        correction_groups = maud_input._maudy_config.correction_groups
+        correction_groups = correction_groups if correction_groups else self.group_balanced_moieties()
+        self.correction_groups_named = correction_groups
+        self.correct_groups = (
             [
                 torch.LongTensor([bal_mics.index(met) for met in q_group])
-                for q_group in quenching_groups
+                for q_group in correction_groups
             ]
-            if quenching_groups and quench
+            if correction_groups and correct
             else []
         )
-        # the input of the quenching neural network is balanced concentrations and vmax
-        quench_input = met_dim + len(enzymatic_reactions)
-        self.quench = (
+        self.not_correct_groups = torch.LongTensor([i for i in range(len(bal_mics)) if i not in (torch.cat(self.correct_groups) if self.correct_groups else [])])
+        # the input of the quenching neural network is balanced concentrations
+        correct_input = met_dim
+        correct_output = met_dim - len(self.correct_groups)
+        self.correct_output = correct_output
+        self.correct = (
         (
             lambda _: torch.zeros(
-                (len(self.experiments), met_dim), device=self.water_stoichiometry.device
+                (len(self.experiments), met_dim), device=self.water_stoichiometry.device,
+                dtype=self.water_stoichiometry.dtype
             )
         )
-        if not quench
+        if not correct
         else nn.Sequential(
             *[
-                nn.Sequential(nn.Linear(in_dim, out_dim), Norm(), nn.ReLU())
+                nn.Sequential(nn.Linear(in_dim, out_dim), BatchNorm(out_dim), nn.ReLU())
                 for in_dim, out_dim in zip(
-                    [quench_input] + nn_config.quench_dims, nn_config.quench_dims + [met_dim]
+                    [correct_input] + nn_config.correction_dims, nn_config.correction_dims + [correct_output]
                 )
-            ], nn.Linear(met_dim, met_dim)
+            ], nn.Linear(correct_output, correct_output)
         )
         )
+        self.should_correct = correct
+        if self.should_correct:
+            self.correction_mask  = self.get_observed_correction_mask()
 
-    def group_quenching_by_moieties(self) -> list[list[str]]:
+    def group_balanced_moieties(self) -> list[list[str]]:
         """Find metabolite groups sharing a conserved moiety."""
         mics = [met.id for met in self.kinetic_model.mics]
-        st = self.S.cpu().numpy()
-        conserved = extract_conserved_moiety_matrix(st, mics, 1e-7)
+        st = self.S[self.balanced_mics_idx, :].cpu().numpy()
+        conserved = extract_conserved_moiety_matrix(st, [mics[i] for i in self.balanced_mics_idx], 1e-7)
         if conserved is None:
             return []
         # filter out unbalanced metabolites
@@ -508,18 +505,78 @@ class Maudy(nn.Module):
             for col in conserved.columns
         ]
 
-    def correct_quenching(self, ln_bal_conc: torch.Tensor, vmax: torch.Tensor):
+    def get_observed_correction_mask(self):
+        """Setup mask for correction.
+
+        The criterion for applying a learned correction from steady-state is
+        observed OR in a conserved group with an observed metabolite.
+        """
+        correction_mask = torch.zeros_like(
+            self.obs_conc_mask[:, self.balanced_mics_idx], dtype=torch.bool
+        )
+
+        for i in range(len(self.experiments)):
+            exp_mask = torch.zeros_like(self.balanced_mics_idx, dtype=torch.bool)
+            observed_mets = self.obs_conc_mask[i, self.balanced_mics_idx]
+            not_in_group = set(range(len(self.balanced_mics_idx))) - (
+                set(torch.cat(self.correct_groups).tolist()) if self.correct_groups else set()
+            )
+            exp_mask[list(not_in_group)] = observed_mets[list(not_in_group)]
+            # all mets in each conserved moiety group are True if any
+            # of the members is observed
+            for group_idx in self.correct_groups:
+                if observed_mets[group_idx].any():
+                    exp_mask[group_idx] = True
+            correction_mask[i] = exp_mask
+
+        return correction_mask
+
+
+    def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor, annealing_factor: float):
         """Gets quenching correction (if `self.quench` is True).
 
-        Mass conservation is forced through `self.quenched_groups`.
+        Mass conservation is forced through `self.correct_groups`, and the total
+        quenching amount is scaled by a parameter `total` from the model.
+
+        We scale by the normalized ssd.
         """
-        quench_correction = self.quench(torch.cat([ln_bal_conc, vmax], dim=-1))
-        for group_idx in self.quench_groups:
-            group = ln_bal_conc[:, group_idx]
-            sum_conc = group.exp().sum(dim=-1)
-            proportions = softmax((group - quench_correction[:, group_idx]).exp(), dim=-1)
-            quench_correction[:, group_idx] = (group - (sum_conc.unsqueeze(-1) * proportions).log())
-        return quench_correction
+        out = torch.zeros_like(ln_bal_conc)
+        if not self.should_correct or annealing_factor < 1:
+            return out
+        q_index = 0
+        epsilon = 1e-14
+        for group_idx in self.correct_groups:
+            indices_to_subtract = group_idx[:-1]
+            num_indices = len(indices_to_subtract)
+            sum_conc = ln_bal_conc[:, group_idx].exp().sum(dim=-1)
+            corrections = correction[:, q_index:q_index + num_indices]
+            corrections = corrections.clamp(min=0)
+            out[:, indices_to_subtract] = corrections
+
+            corrected_ln_conc = ln_bal_conc[:, indices_to_subtract] - corrections
+            sum_conc_q = corrected_ln_conc.exp().sum(dim=-1)
+
+            # calibrate corrections such that corrected_ln_conc < sum_conc_q,
+            # making the remaining concentration in the group > 0.
+            exceed_mask = sum_conc_q >= (sum_conc - epsilon)
+            if exceed_mask.any():
+                scale = ((sum_conc - epsilon) / sum_conc_q).clamp(max=1.0)
+                corrections_adjusted = corrections * scale.unsqueeze(-1)
+                out[exceed_mask, :][:, indices_to_subtract] = corrections_adjusted[exceed_mask]
+                corrected_ln_conc = ln_bal_conc[:, indices_to_subtract] - corrections_adjusted
+                sum_conc_q = corrected_ln_conc.exp().sum(dim=-1)
+            remaining_conc = sum_conc - sum_conc_q
+            # remaining_conc must be positive
+            remaining_conc = remaining_conc.clamp(min=epsilon)
+            corrected_ln_conc_last = remaining_conc.log()
+            out[:, group_idx[-1]] = ln_bal_conc[:, group_idx[-1]] - corrected_ln_conc_last
+
+            q_index += num_indices
+        # fill in those that do not participate in conserved groups
+        out[:, self.not_correct_groups] = correction[:, q_index:(q_index + len(self.not_correct_groups))]
+        # only apply correction to observed metabolites
+        out = out * self.correction_mask
+        return out
 
     def cuda(self):
         super().cuda()
@@ -532,6 +589,27 @@ class Maudy(nn.Module):
                     for x in self.__dict__[key]
                 ]
 
+    def to_double(self):
+        self.apply(lambda module: module._apply(lambda t: t.double() if t.dtype == torch.float32 else t))
+        def _convert_to_double(obj):
+            if isinstance(obj, torch.Tensor):
+                if obj.dtype == torch.float32:
+                    return obj.double()
+                else:
+                    return obj
+            elif isinstance(obj, list):
+                return [_convert_to_double(x) for x in obj]
+            elif isinstance(obj, tuple):
+                return tuple(_convert_to_double(x) for x in obj)
+            elif isinstance(obj, dict):
+                return {k: _convert_to_double(v) for k, v in obj.items()}
+            else:
+                return obj
+
+        for key in self.__dict__.keys():
+            attr = self.__dict__[key]
+            self.__dict__[key] = _convert_to_double(attr)
+
     def model(
         self,
         obs_flux: Optional[torch.FloatTensor] = None,
@@ -542,7 +620,9 @@ class Maudy(nn.Module):
     ):
         """Describe the generative model."""
         # Register various nn.Modules (neural networks) with Pyro
-        pyro.module("maudy", self)
+        pyro.module("decoder", self.decoder)
+        if isinstance(self.correct, nn.Module):
+            pyro.module("correct", self.correct)
 
         # experiment-indepedent variables
         kcat = pyro.sample(
@@ -583,10 +663,11 @@ class Maudy(nn.Module):
                 "tc", dist.LogNormal(self.tc_loc, self.tc_scale).to_event(1)
             )
             rest = torch.cat([rest, tc, dc], dim=-1)
-        # TODO: need to take this from the config (and done in th epalte)
+        # TODO: need to take this from the config (and done in the plate)
         psi = pyro.sample(
             "psi", dist.Normal(self.float_tensor(-0.110), self.float_tensor(0.01))
         )
+        sigma_latent = pyro.sample("sigma_latent", dist.InverseGamma(self.float_tensor([2.5]), self.float_tensor([1.5])))
         with pyro.plate("experiment", size=len(self.experiments)) as idx:
             enzyme_conc = pyro.sample(
                 "enzyme_conc",
@@ -612,7 +693,7 @@ class Maudy(nn.Module):
             with pyro.poutine.scale(scale=annealing_factor):
                 latent_bal_conc = pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), 1.0).to_event(
+                    dist.Normal(torch.full_like(self.obs_conc[:, self.balanced_mics_idx], self.init_latent), sigma_latent).to_event(
                         1
                     ),
                 )
@@ -622,7 +703,7 @@ class Maudy(nn.Module):
                 event_dim=1,
             )
             conc = kcat.new_ones(len(self.experiments), self.num_mics)
-            conc[:, self.balanced_mics_idx] = ln_bal_conc.exp()
+            conc[:, self.balanced_mics_idx] = self.safexp(ln_bal_conc)
             conc[:, self.unbalanced_mics_idx] = unb_conc
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
@@ -735,47 +816,48 @@ class Maudy(nn.Module):
                 dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
                 obs=obs_flux,
             )
-            # quenched concentrations
+            # corrected concentrations
             conc_comp = kcat.new_ones(len(self.experiments), self.num_mics)
-
-            quench_correction = pyro.deterministic("quench_correction", 
-                                                   self.correct_quenching(ln_bal_conc, vmax))
-            conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - quench_correction
+            correction = pyro.deterministic(
+                "correction",
+                self.normalize_correction(
+                    self.correct(ln_bal_conc) if self.should_correct else None, ln_bal_conc, annealing_factor
+                ),
+            )
+            conc_comp[:, self.balanced_mics_idx] = ln_bal_conc - correction
             conc_comp[:, self.unbalanced_mics_idx] = unb_conc.log()
             for i in idx:
                 pyro.sample(
                     f"y_conc_train_{i}",
                     dist.LogNormal(
                         conc_comp[i][self.obs_conc_mask[i]],
-                        self.obs_conc_std[i][self.obs_conc_mask[i]] / annealing_factor,
+                        self.obs_conc_std[i][self.obs_conc_mask[i]] * annealing_factor,
                     ).to_event(1),
                     obs=obs_conc[i][self.obs_conc_mask[i]] if obs_conc is not None else None,
                 )
             if penalize_ss:
+                # as much as we can, do not make SSD a moving target
+                # denom = torch.where(
+                #     torch.isnan(self.obs_conc[:, self.balanced_mics_idx]),
+                #     conc[:, self.balanced_mics_idx].detach(),
+                #     self.obs_conc[:, self.balanced_mics_idx]
+                # )
                 ssd_factor = pyro.deterministic(
                     "ssd_factor",
-                    # 0.5 * torch.exp(2 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.90775, 6.90775)).sum(dim=-1),
-                    # torch.log(ssd.abs() + 1e-12).clamp(ln_bal_conc - 6.907755, None).sum(dim=-1),
                     1000 * ssd.abs().clamp(1e-11, None).sum(dim=-1),
-                    # 1000 * (torch.log(ssd.abs() + 1e-14) - ln_bal_conc).clamp(-6.907755, None),
                     event_dim=1,
                 )
+                assert not torch.isnan(
+                    ssd_factor
+                ).any(), (f"NaN GENERATED\n=============\ndGf\n{dgf}\n=============\n[conc]"
+                f"\n=============\n{conc}\nlatent_bal_conc\n=============\n{latent_bal_conc}")
                 pyro.factor(
                     "steady_state_dev",
                      -ssd_factor.sum(dim=-1),
                 )
-                # ssd_factor = pyro.deterministic(
-                #     "ssd_factor",
-                #     ssd.abs() / (ln_bal_conc.exp() + 1e-13),
-                #     event_dim=1,
-                # )
-                # pyro.factor(
-                #     "steady_state_dev",
-                #     -ssd_factor.clamp(1e-3, 1000).sum(dim=-1),
-                # )
 
     def float_tensor(self, x) -> torch.Tensor:
-        return torch.tensor(x, device=self.water_stoichiometry.device)
+        return torch.tensor(x, device=self.water_stoichiometry.device, dtype=self.water_stoichiometry.dtype)
 
     # The guide specifies the variational distribution
     def guide(
@@ -787,10 +869,11 @@ class Maudy(nn.Module):
         train: bool = True,
     ):
         """Establish the variational distributions for SVI."""
-        pyro.module("maudy", self)
-        dgf_param_loc = pyro.param("dgf_loc", self.dgf_means)
+        pyro.module("concoder", self.concoder)
+        dgf_param_loc = pyro.param("dgf_loc", lambda: self.dgf_means.clone())
+        dgf_param_cov = pyro.param("dgf_cov", lambda: self.dgf_cov.clone(), constraint=dist.constraints.lower_cholesky)
         dgf = pyro.sample(
-            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=self.dgf_cov)
+            "dgf", dist.MultivariateNormal(dgf_param_loc, scale_tril=dgf_param_cov)
         )
         fdx_contr_loc = pyro.param("fdx_contr_loc", self.float_tensor([77.0]))
         fdx_contr_scale = pyro.param(
@@ -801,12 +884,13 @@ class Maudy(nn.Module):
             if any(st != 0 for st in self.fdx_stoichiometry)
             else self.float_tensor([0.0])
         )
-        kcat_param_loc = pyro.param("kcat_loc", self.kcat_loc)
+        kcat_param_loc = pyro.param("kcat_loc", lambda: self.kcat_loc.clone())
+        kcat_param_scale = pyro.param("kcat_scale", lambda: self.kcat_scale.clone(), Positive)
         kcat = pyro.sample(
-            "kcat", dist.LogNormal(kcat_param_loc, self.kcat_scale).to_event(1)
+            "kcat", dist.LogNormal(kcat_param_loc, kcat_param_scale).to_event(1)
         )
-        km_loc = pyro.param("km_loc", self.km_loc)
-        km_scale = pyro.param("km_scale", self.km_scale, Positive)
+        km_loc = pyro.param("km_loc", lambda: self.km_loc.clone())
+        km_scale = pyro.param("km_scale", lambda: self.km_scale.clone(), Positive)
         km = pyro.sample("km", dist.LogNormal(km_loc, km_scale).to_event(1))
         dgr = get_dgr(
             self.S_enz,
@@ -817,15 +901,15 @@ class Maudy(nn.Module):
         )
         rest = self.float_tensor([])
         if self.has_ci:
-            ki_loc = pyro.param("ki_loc", self.ki_loc)
-            ki_scale = pyro.param("ki_scale", self.ki_scale, Positive)
+            ki_loc = pyro.param("ki_loc", lambda: self.ki_loc.clone())
+            ki_scale = pyro.param("ki_scale", lambda: self.ki_scale.clone(), Positive)
             ki = pyro.sample("ki", dist.LogNormal(ki_loc, ki_scale).to_event(1))
             rest = ki
         if self.has_allostery:
-            dc_loc = pyro.param("dc_loc", self.dc_loc)
-            dc_scale = pyro.param("dc_scale", self.dc_scale, Positive)
-            tc_loc = pyro.param("tc_loc", self.tc_loc)
-            tc_scale = pyro.param("tc_scale", self.tc_scale, Positive)
+            dc_loc = pyro.param("dc_loc", lambda: self.dc_loc.clone())
+            dc_scale = pyro.param("dc_scale", lambda: self.dc_scale.clone(), Positive)
+            tc_loc = pyro.param("tc_loc", lambda: self.tc_loc.clone())
+            tc_scale = pyro.param("tc_scale", lambda: self.tc_scale.clone(), Positive)
             dc = pyro.sample("dc", dist.LogNormal(dc_loc, dc_scale).to_event(1))
             tc = pyro.sample("tc", dist.LogNormal(tc_loc, tc_scale).to_event(1))
             rest = torch.cat([rest, tc, dc])
@@ -834,19 +918,26 @@ class Maudy(nn.Module):
         pyro.sample(
             "psi", dist.Normal(psi_mean, self.float_tensor(0.01))
         )
+        sigma_latent_loc = pyro.param("sigma_latent_loc", self.float_tensor([2.5]), constraint=dist.constraints.positive)
+        sigma_latent_scale = pyro.param("sigma_latent_scale", self.float_tensor([1.5]), constraint=dist.constraints.positive)
+        pyro.sample("sigma_latent", dist.InverseGamma(sigma_latent_loc, sigma_latent_scale))
         with pyro.plate("experiment", size=len(self.experiments)):
             enzyme_concs_param_loc = pyro.param(
-                "enzyme_concs_loc", self.enzyme_concs_loc, event_dim=1
+                "enzyme_concs_loc", lambda: self.enzyme_concs_loc.clone(), event_dim=1
             ) if train else self.enzyme_concs_loc
+            enzyme_concs_param_scale = pyro.param(
+                "enzyme_concs_scale", lambda: self.enzyme_concs_scale.clone(), event_dim=1,
+                constraint=Positive,
+            ) if train else self.enzyme_concs_scale
             enz_conc = pyro.sample(
                 "enzyme_conc",
                 dist.LogNormal(
-                    enzyme_concs_param_loc, self.enzyme_concs_scale
+                    enzyme_concs_param_loc, enzyme_concs_param_scale
                 ).to_event(1),
             )
-            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean, event_dim=1) if train else self.drain_mean
+            drain_mean = pyro.param("drain_mean", lambda: self.drain_mean.clone(), event_dim=1) if train else self.drain_mean
             drain_std = pyro.param(
-                "drain_std", lambda: self.drain_std, constraint=Positive, event_dim=1
+                "drain_std", lambda: self.drain_std.clone(), constraint=Positive, event_dim=1
             ) if train else self.drain_std
             kcat_drain = (
                 pyro.sample(
@@ -858,7 +949,7 @@ class Maudy(nn.Module):
             )
             unb_conc_param_loc = pyro.param(
                 "unb_conc_param_loc",
-                self.unb_conc_loc[:, self.non_optimized_unbalanced_idx],
+                lambda: self.unb_conc_loc[:, self.non_optimized_unbalanced_idx].clone(),
                 event_dim=1,
             ) if train else self.unb_conc_loc[:, self.non_optimized_unbalanced_idx]
             concoder_output = self.concoder(
@@ -877,16 +968,22 @@ class Maudy(nn.Module):
             if self.has_fdx:
                 fdx_ratio = concoder_output.pop()
             latent_bal_conc_loc, bal_conc_scale = concoder_output
+            unb_conc_scale = pyro.param(
+                "unb_conc_scale",
+                lambda: self.unb_conc_scale.clone(),
+                constraint=Positive,
+                event_dim=1,
+            ) if train else self.unb_conc_scale.clone()
             pyro.sample(
                 "unb_conc",
                 dist.LogNormal(
-                    unb_conc_param_loc_full, self.unb_conc_scale
+                    unb_conc_param_loc_full, unb_conc_scale
                 ).to_event(1),
             )
             with pyro.poutine.scale(scale=annealing_factor):
                 pyro.sample(
                     "latent_bal_conc",
-                    dist.LogNormal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
+                    dist.Normal(latent_bal_conc_loc, bal_conc_scale + 0.0001).to_event(1),
                 )
             if self.has_fdx:
                 fdx_ratio = pyro.sample(
