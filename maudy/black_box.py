@@ -27,6 +27,17 @@ class Clamp(nn.Module):
         return x.clamp(self.min_val, self.max_val)
 
 
+class TanhScale(nn.Module):
+    def __init__(self, min_val: float, max_val: float):
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = torch.tanh(x)
+        return self.min_val + (self.max_val - self.min_val) * (x + 1) / 2
+
+
 class BaseConcCoder(nn.Module):
     """Base neural network, outputs location and scale of balanced metabolites."""
 
@@ -85,6 +96,9 @@ class BaseConcCoder(nn.Module):
                         for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
                     ],
                     nn.Linear(out_dims[-1], out_dims[-1]),
+                    Clamp(normalize[0], normalize[1])
+                    if normalize is not None
+                    else nn.Identity(),
                 ),
                 nn.Sequential(  # scale layer
                     *[
