@@ -129,7 +129,7 @@ class BaseConcCoder(nn.Module):
         if self.normalize:
             enz_conc, drains, kcat, km, rest = (
                 enz_conc.log(),
-                torch.asinh(drains),
+                signed_log(drains),
                 kcat.log(),
                 km.log(),
                 rest.log(),
@@ -169,6 +169,11 @@ def unb_opt_head(concoder: BaseConcCoder, unb_dim: int):
     concoder.out_layers.append(unb_met_loc_layer)
 
 
+def signed_log(x: torch.Tensor) -> torch.Tensor:
+    """Transformation to normalize the drains (in all R)."""
+    return torch.sign(x) * torch.log(x.abs())
+
+
 class BaseDecoder(nn.Module):
     def __init__(
         self,
@@ -197,6 +202,6 @@ class BaseDecoder(nn.Module):
         drain: torch.Tensor,
     ):
         if self.normalize:
-            unb, enz, drain = unb.log(), enz.log(), torch.asinh(drain)
+            unb, enz, drain = unb.log(), enz.log(), signed_log(drain)
         features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)
