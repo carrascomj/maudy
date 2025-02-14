@@ -25,6 +25,7 @@ def load(model_output: Path):
     # otherwise, a sequential where the first element is the layer
     normalize = "decoder.loc_layer.0.bias" in state_dict["maudy"]
     correct = "correct.0.0.bias" in state_dict["maudy"]
+    print(f"{normalize=} | {correct=}")
     maudy = Maudy(maud_input, normalize, correct)
     maudy.load_state_dict(state_dict["maudy"])
     pyro.get_param_store().load(str(model_output / "model_params.pt"), map_location="cpu")

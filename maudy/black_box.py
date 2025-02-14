@@ -143,7 +143,7 @@ class BaseConcCoder(nn.Module):
         if self.normalize:
             enz_conc, drains, kcat, km, rest = (
                 enz_conc.log(),
-                drains * 1e6,
+                torch.asinh(drains),
                 kcat.log(),
                 km.log(),
                 rest.log(),
@@ -211,6 +211,6 @@ class BaseDecoder(nn.Module):
         drain: torch.Tensor,
     ):
         if self.normalize:
-            unb, enz, drain = unb.log(), enz.log(), drain * 1e3
+            unb, enz, drain = unb.log(), enz.log(), torch.asinh(drain)
         features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)
