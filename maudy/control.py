@@ -14,6 +14,20 @@ DECODER_TO_SAMPLE = {
     "enzyme_conc": "enz",
     "kcat_drain": "drain",
 }
+PRIOR_VARS = [
+    "kcat",
+    "dgf",
+    "km",
+    "psi",
+    "enzyme_conc",
+    "kcat_drain",
+    "unb_conc",
+    "ki",
+    "dc",
+    "tc",
+    "fdx_contr",
+    "fdx_ratio",
+]
 
 
 def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
@@ -30,7 +44,7 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     prior_wrt: str
         names of sample site $p$ to compute the jacobian
         $\fraction{\partial [C]_b}{\partial p}$
-    
+
     Returns
     -------
     jacobian: torch.Tensor
@@ -39,22 +53,8 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     # get sampled values from trained guide
     guide_trace = poutine.trace(model.guide).get_trace(None, None, True, 1.0, True)
     # gather prior model variables
-    prior_vars = [
-        "kcat",
-        "dgf",
-        "km",
-        "psi",
-        "enzyme_conc",
-        "kcat_drain",
-        "unb_conc",
-        "ci",
-        "dc",
-        "tc",
-        "fdx_contr",
-        "fdx_ratio",
-    ]
     # the model might not have this sampling sites in case there are no drains, no CI, etc.
-    prior_vars = [prior for prior in prior_vars if prior in guide_trace.nodes]
+    prior_vars = [prior for prior in PRIOR_VARS if prior in guide_trace.nodes]
 
     # fix latent variables to the traced output
     conditioned_model = poutine.condition(
