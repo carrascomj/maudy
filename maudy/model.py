@@ -417,6 +417,7 @@ class Maudy(nn.Module):
         all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
         min_max = (all_concs.min().item() - 3, all_concs.max().item() + 2) if normalize else None
         self.safexp = (lambda x: x.exp()) if min_max is None else lambda x: x.clamp(min_max[0], min_max[1]).exp()
+        drain_mult = (10 ** torch.log(self.drain_mean.min().abs()), 0) if normalize else None
         self.init_latent = all_concs.mean().item()
         self.normalize = normalize
         self.decoder = BaseDecoder(
@@ -424,7 +425,7 @@ class Maudy(nn.Module):
             unb_dim=self.unb_conc_loc.shape[1],
             enz_dim=len(enzymatic_reactions),
             drain_dim=self.drain_mean.shape[1],
-            normalize=min_max,
+            normalize=drain_mult,
             batchnorm=len(self.experiments) > 1,
         )
         nn_encoder = BaseConcCoder(
@@ -442,7 +443,7 @@ class Maudy(nn.Module):
             # batch norm and dropout won't work without a batch dim
             drop_out=len(self.experiments) > 1,
             batchnorm=len(self.experiments) > 1,
-            normalize=min_max,
+            normalize=drain_mult,
         )
         if self.has_fdx:
             fdx_head(nn_encoder)

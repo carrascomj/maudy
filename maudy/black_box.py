@@ -17,27 +17,6 @@ class BatchNorm(nn.Module):
         return self.batch_norm(x)
 
 
-class Clamp(nn.Module):
-    def __init__(self, min_val: float, max_val: float):
-        super().__init__()
-        self.min_val = min_val
-        self.max_val = max_val
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x.clamp(self.min_val, self.max_val)
-
-
-class TanhScale(nn.Module):
-    def __init__(self, min_val: float, max_val: float):
-        super().__init__()
-        self.min_val = min_val
-        self.max_val = max_val
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = torch.tanh(x)
-        return self.min_val + (self.max_val - self.min_val) * (x + 1) / 2
-
-
 class BaseConcCoder(nn.Module):
     """Base neural network, outputs location and scale of balanced metabolites."""
 
@@ -80,6 +59,7 @@ class BaseConcCoder(nn.Module):
             nn.Dropout1d() if drop_out else nn.Identity(),
         )
 
+        self.drain_multiplier = 1 if normalize is None else normalize[0]
         out_dims = met_dims.copy()
         out_dims[0] = out_dims[-1]
         self.normalize = normalize is not None
@@ -96,9 +76,6 @@ class BaseConcCoder(nn.Module):
                         for in_dim, out_dim in zip(out_dims[:-1], out_dims[1:])
                     ],
                     nn.Linear(out_dims[-1], out_dims[-1]),
-                    Clamp(normalize[0], normalize[1])
-                    if normalize is not None
-                    else nn.Identity(),
                 ),
                 nn.Sequential(  # scale layer
                     *[
@@ -143,7 +120,7 @@ class BaseConcCoder(nn.Module):
         if self.normalize:
             enz_conc, drains, kcat, km, rest = (
                 enz_conc.log(),
-                signed_log(drains),
+                drains * self.drain_multiplier,
                 kcat.log(),
                 km.log(),
                 rest.log(),
@@ -183,11 +160,6 @@ def unb_opt_head(concoder: BaseConcCoder, unb_dim: int):
     concoder.out_layers.append(unb_met_loc_layer)
 
 
-def signed_log(x: torch.Tensor) -> torch.Tensor:
-    """Transformation to normalize the drains (in all R)."""
-    return torch.sign(x) * torch.log(x.abs())
-
-
 class BaseDecoder(nn.Module):
     def __init__(
         self,
@@ -202,6 +174,7 @@ class BaseDecoder(nn.Module):
         layer = nn.Linear(met_dim + unb_dim + enz_dim + drain_dim, met_dim)
         self.normalize = normalize is not None
         self.loc_layer = layer
+        self.drain_multiplier = 1 if normalize is None else normalize[0]
         # self.loc_layer = (
         #     nn.Sequential(layer, Clamp(normalize[0], normalize[1]))
         #     if normalize is not None
@@ -216,6 +189,6 @@ class BaseDecoder(nn.Module):
         drain: torch.Tensor,
     ):
         if self.normalize:
-            unb, enz, drain = unb.log(), enz.log(), signed_log(drain)
+            unb, enz, drain = unb.log(), enz.log(), drain * self.drain_multiplier
         features = torch.cat((met, unb, enz, drain), dim=-1)
         return self.loc_layer(features)
