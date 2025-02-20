@@ -417,7 +417,16 @@ class Maudy(nn.Module):
         all_concs = torch.cat((self.obs_conc[self.obs_conc_mask].log(), self.unb_conc_loc.flatten()))
         min_max = (all_concs.min().item() - 3, all_concs.max().item() + 2) if normalize else None
         self.safexp = (lambda x: x.exp()) if min_max is None else lambda x: x.clamp(min_max[0], min_max[1]).exp()
-        drain_mult = (10 ** torch.log(self.drain_mean.min().abs()), 0) if normalize else None
+        drain_mult = (
+            None
+            if not normalize
+            else (
+                10 ** torch.log(self.drain_mean.min().abs())
+                if self.drain_mean.numel() and normalize
+                else 1.0,
+                0,
+            )
+        )
         self.init_latent = all_concs.mean().item()
         self.normalize = normalize
         self.decoder = BaseDecoder(
