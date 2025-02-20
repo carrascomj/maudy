@@ -7,6 +7,7 @@ import pyro.poutine as poutine
 from torch.autograd.functional import jacobian
 
 from .model import Maudy
+from .kinetics import compute_flux
 
 
 DECODER_TO_SAMPLE = {
@@ -31,8 +32,10 @@ PRIOR_VARS = [
 ]
 
 
-def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
-    r"""Generate gradients of the concentration w.r.t. a _prior variable_ `prior_wrt`.
+def get_jacobian(
+    model: Maudy, prior_wrt: str = "enzyme_conc", d_conc: bool = True
+) -> torch.Tensor:
+    r"""Generate gradients of the steady-state concentrations or fluxes w.r.t. a _prior variable_ `prior_wrt`.
 
     Prior variables refers to the prior model (kinetic paramters, enzyme conc, etc.).
     These prior variables are first sampled to then fixed them to generate a
@@ -45,12 +48,15 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     prior_wrt: str
         names of sample site $p$ to compute the jacobian
         $\fraction{\partial [C]_b}{\partial p}$
+    conc: bool, default=False
+        if conc, the numerator are steady-state concenterations, fluxes otherwise.
 
     Returns
     -------
     jacobian: torch.Tensor
-        of shape [Experiment, Balanced Metabolite, prior_wrt]; or, if `prior_wrt`
-        is experiment-independent and there is only one experiment, [B, P]
+        of shape [Experiment, N, prior_wrt] where N is num bal metabolites
+        or num reactions; or, if `prior_wrt`
+        is experiment-independent and there is only one experiment, [N, P]
     """
     # get sampled values from trained guide
     guide_trace = poutine.trace(model.guide).get_trace(None, None, True, 1.0, True)
@@ -80,14 +86,26 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     }
 
     def forward(v):
-        if prior_wrt in DECODER_TO_SAMPLE:
+        if prior_wrt in DECODER_TO_SAMPLE and d_conc:
             # the output is only dependant on the decoder
-            return model.decoder(**(decoder_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v}))
+            c_bal = model.decoder(
+                **(decoder_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v})
+            )
         else:
             # the output dependends on both decoder and encoder
-            encoder_inputs = _pack_encoder_inputs(model_trace.nodes | {prior_wrt: v})
+            nodes = model_trace.nodes | {prior_wrt: v}
+            encoder_inputs = _pack_encoder_inputs(nodes)
             x = model.concoder(**encoder_inputs)[-2]
-            return model.decoder(**(decoder_inputs | {"met": x}))
+            c_bal = model.decoder(**(decoder_inputs | {"met": x}))
+        if d_conc:
+            return c_bal
+        conc = c_bal.new_ones(len(model.experiments), model.num_mics)
+        conc[:, model.balanced_mics_idx] = model.safexp(c_bal)
+        conc[:, model.unbalanced_mics_idx] = _get(nodes, "unb_conc")
+        return compute_flux(
+            model, conc, *[_get(nodes, site) for site in ["km", "ki", "kcat",
+            "enzyme_conc", "dgr", "psi", "tc", "dc", "kcat_drain"]], 1e-9
+        )  # fmt: skip
 
     j: torch.Tensor = jacobian(forward, prior_val)
     pruned_jacobian = prune_jacobian(j)
@@ -96,7 +114,7 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
 
 def _get(nodes: dict[str, Any], key: str) -> torch.Tensor:
     if key not in nodes:
-        tensor = nodes["enzyme_conc"]["value"]
+        tensor = nodes["dgf"]["value"]
         return torch.tensor([], dtype=tensor.dtype, device=tensor.device)
     s = nodes[key]
     return s if isinstance(s, torch.Tensor) else s["value"]
@@ -131,8 +149,7 @@ def prune_jacobian(j: torch.Tensor) -> torch.Tensor:
         # if experiment-independent, the j.shape is [1, N, C]
         j.squeeze_(0)
         return j
-    # prune jacobian of full-zero rows, corresponding to prior_wrt gradient
-    #  w.r.t. concentrations in other experiments
-    pruned_jacobian = j[~torch.all(j == 0, dim=-1)]
-    # recover the experiment dim that was flattened
-    return pruned_jacobian.reshape(j.shape[0], -1, pruned_jacobian.shape[-1])
+    # prune jacobian of unrelated rows, extracting the diagonal
+    # [E, A, E, B] -> [E, A, B]
+    pruned_jacobian = j[torch.arange(j.shape[0]), :, torch.arange(j.shape[0]), :]
+    return pruned_jacobian
