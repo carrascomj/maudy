@@ -1,7 +1,8 @@
 """Implement gradient analysis for metabolic control-like functionality."""
 
-import torch
+from typing import Any
 
+import torch
 import pyro.poutine as poutine
 from torch.autograd.functional import jacobian
 
@@ -48,7 +49,8 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     Returns
     -------
     jacobian: torch.Tensor
-        of shape [Experiment, Balanced Metabolite, prior_wrt]
+        of shape [Experiment, Balanced Metabolite, prior_wrt]; or, if `prior_wrt`
+        is experiment-independent and there is only one experiment, [B, P]
     """
     # get sampled values from trained guide
     guide_trace = poutine.trace(model.guide).get_trace(None, None, True, 1.0, True)
@@ -70,7 +72,7 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     prior_variable = model_trace.nodes[prior_wrt]["value"]
     prior_val = prior_variable.detach().clone().requires_grad_(True)
 
-    nn_inputs = {
+    decoder_inputs = {
         nn_arg: model_trace.nodes[site]["value"]
         if site in model_trace.nodes
         else model.float_tensor([])
@@ -78,9 +80,57 @@ def get_jacobian(model: Maudy, prior_wrt: str = "enzyme_conc") -> torch.Tensor:
     }
 
     def forward(v):
-        return model.decoder(**(nn_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v}))
+        if prior_wrt in DECODER_TO_SAMPLE:
+            # the output is only dependant on the decoder
+            return model.decoder(**(decoder_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v}))
+        else:
+            # the output dependends on both decoder and encoder
+            encoder_inputs = _pack_encoder_inputs(model_trace.nodes | {prior_wrt: v})
+            x = model.concoder(**encoder_inputs)[-2]
+            return model.decoder(**(decoder_inputs | {"met": x}))
 
     j: torch.Tensor = jacobian(forward, prior_val)
+    pruned_jacobian = prune_jacobian(j)
+    return pruned_jacobian
+
+
+def _get(nodes: dict[str, Any], key: str) -> torch.Tensor:
+    if key not in nodes:
+        tensor = nodes["enzyme_conc"]["value"]
+        return torch.tensor([], dtype=tensor.dtype, device=tensor.device)
+    s = nodes[key]
+    return s if isinstance(s, torch.Tensor) else s["value"]
+
+
+def _pack_encoder_inputs(nodes: dict[str, Any]) -> dict[str, torch.Tensor]:
+    """Pack inputs given nodes.
+
+    This is required since the inputs of the concoder are not 1:1 map from
+    the sample sites.
+
+    Parameters
+    ----------
+    nodes: dict[str, Any]
+        the values are either from a trace (message with key `value`) or
+        directly a torch.Tensor.
+    """
+    encoder_inputs = {nn_arg: _get(nodes, nn_arg) for nn_arg in ["dgr", "kcat", "km"]}
+    # and the special cases
+    encoder_inputs["conc"] = _get(nodes, "unb_conc")
+    encoder_inputs["enz_conc"] = _get(nodes, "enzyme_conc")
+    encoder_inputs["drains"] = _get(nodes, "kcat_drain")
+    rest = _get(nodes, "rest")  # empty tensor
+    encoder_inputs["rest"] = torch.cat(
+        [rest] + [_get(nodes, site) for site in ["ki", "dc", "tc"] if site in nodes]
+    )
+    return encoder_inputs
+
+
+def prune_jacobian(j: torch.Tensor) -> torch.Tensor:
+    if len(j.shape) == 3:
+        # if experiment-independent, the j.shape is [1, N, C]
+        j.squeeze_(0)
+        return j
     # prune jacobian of full-zero rows, corresponding to prior_wrt gradient
     #  w.r.t. concentrations in other experiments
     pruned_jacobian = j[~torch.all(j == 0, dim=-1)]
