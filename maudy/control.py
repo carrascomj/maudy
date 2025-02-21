@@ -134,7 +134,7 @@ def _pack_encoder_inputs(nodes: dict[str, Any]) -> dict[str, torch.Tensor]:
     """
     encoder_inputs = {nn_arg: _get(nodes, nn_arg) for nn_arg in ["dgr", "kcat", "km"]}
     # and the special cases
-    encoder_inputs["conc"] = _get(nodes, "unb_conc")
+    encoder_inputs["conc"] = torch.log(_get(nodes, "unb_conc"))
     encoder_inputs["enz_conc"] = _get(nodes, "enzyme_conc")
     encoder_inputs["drains"] = _get(nodes, "kcat_drain")
     rest = _get(nodes, "rest")  # empty tensor
