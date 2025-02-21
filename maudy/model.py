@@ -823,7 +823,7 @@ class Maudy(nn.Module):
             )
             pyro.sample(
                 "y_flux_train",
-                dist.Normal(true_obs_flux, self.obs_fluxes_std * annealing_factor).to_event(1),
+                dist.Normal(true_obs_flux, self.obs_fluxes_std).to_event(1),
                 obs=obs_flux,
             )
             # corrected concentrations
@@ -841,7 +841,7 @@ class Maudy(nn.Module):
                     f"y_conc_train_{i}",
                     dist.LogNormal(
                         conc_comp[i][self.obs_conc_mask[i]],
-                        self.obs_conc_std[i][self.obs_conc_mask[i]] * annealing_factor,
+                        self.obs_conc_std[i][self.obs_conc_mask[i]],
                     ).to_event(1),
                     obs=obs_conc[i][self.obs_conc_mask[i]] if obs_conc is not None else None,
                 )
