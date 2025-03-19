@@ -48,8 +48,8 @@ def get_jacobian(
     prior_wrt: str
         names of sample site $p$ to compute the jacobian
         $\fraction{\partial [C]_b}{\partial p}$
-    conc: bool, default=False
-        if conc, the numerator are steady-state concenterations, fluxes otherwise.
+    d_conc: bool, default=False
+        if d_conc, the numerator are steady-state concentrations, fluxes otherwise.
 
     Returns
     -------
@@ -58,6 +58,7 @@ def get_jacobian(
         or num reactions; or, if `prior_wrt`
         is experiment-independent and there is only one experiment, [N, P]
     """
+    assert (prior_wrt != "ln_bal_conc") or not d_conc, "dconc/dconc not possible, use control_matrices instead"
     # get sampled values from trained guide
     guide_trace = poutine.trace(model.guide).get_trace(None, None, True, 1.0, True)
     # gather prior model variables
@@ -86,19 +87,24 @@ def get_jacobian(
     }
 
     def forward(v):
-        if prior_wrt in DECODER_TO_SAMPLE and d_conc:
-            # the output is only dependant on the decoder
-            c_bal = model.decoder(
-                **(decoder_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v})
-            )
+        if prior_wrt == "ln_bal_conc":
+            # neural networks are not involved
+            nodes = model_trace.nodes
+            c_bal = v
         else:
-            # the output dependends on both decoder and encoder
-            nodes = model_trace.nodes | {prior_wrt: v}
-            encoder_inputs = _pack_encoder_inputs(nodes)
-            x = model.concoder(**encoder_inputs)[-2]
-            c_bal = model.decoder(**(decoder_inputs | {"met": x}))
-        if d_conc:
-            return c_bal
+            if prior_wrt in DECODER_TO_SAMPLE and d_conc:
+                # the output is only dependant on the decoder
+                c_bal = model.decoder(
+                    **(decoder_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v})
+                )
+            else:
+                # the output dependends on both decoder and encoder
+                nodes = model_trace.nodes | {prior_wrt: v}
+                encoder_inputs = _pack_encoder_inputs(nodes)
+                x = model.concoder(**encoder_inputs)[-2]
+                c_bal = model.decoder(**(decoder_inputs | {"met": x}))
+            if d_conc:
+                return c_bal
         conc = c_bal.new_ones(len(model.experiments), model.num_mics)
         conc[:, model.balanced_mics_idx] = model.safexp(c_bal)
         conc[:, model.unbalanced_mics_idx] = _get(nodes, "unb_conc")
@@ -153,3 +159,66 @@ def prune_jacobian(j: torch.Tensor) -> torch.Tensor:
     # [E, A, E, B] -> [E, A, B]
     pruned_jacobian = j[torch.arange(j.shape[0]), :, torch.arange(j.shape[0]), :]
     return pruned_jacobian
+
+
+def control_matrices(model: Maudy) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Get concentration and flux control matrix.
+
+    Following ["Notes on Metabolic Control Analysis" by Gunawardena 2002](http://jeremy-gunawardena.com/papers/mca.pdf),
+    we get Eq. 25:
+
+    $$
+    C^S = - (N \frac{\partial v}{\partial S})^{-1} N,
+    $$
+
+    where $C^S$ is the control matrix, $N$ is the stoichoimatric matrix, $v$ is the flux
+    vector and $s$ is the concentration vector. We also return the flux control matrix (Eq. 26):
+
+    $$
+    C^J = I - \frac{\partial v}{\partial S} (N \frac{\partial v}{\partial S})^{-1} N.
+    $$
+
+    Returns
+    -------
+    (c_s, c_j): tuple[torch.Tensor, torch.Tensor]
+        $C^S$ [Experiments, Metabolites, Reactions] and $C^J$ [Experiments, Reactions, Reactions]
+    """
+    # we use the notation in Gunawardena 2002
+    # balanced concentrations w.r.t. fluxes (both enzymatic and drains) (Eq. 28)
+    elasticity = get_jacobian(model, "ln_bal_conc", False)
+    N = model.S.T[:, model.balanced_mics_idx].permute(1, 0)
+    c_s = -torch.inverse(N @ elasticity) @ N
+    I = torch.eye(c_s.shape[-1], c_s.shape[-1]).unsqueeze(0)
+    c_j = I + elasticity @ c_s
+    return c_s, c_j
+
+
+def mca(
+    model: Maudy, prior_wrt: str = "enzyme_conc", d_conc: bool = True
+) -> torch.Tensor:
+    r"""Get metabolic control analysis for `prior_wrt`.
+
+    Following ["Notes on Metabolic Control Analysis" by Gunawardena 2002](http://jeremy-gunawardena.com/papers/mca.pdf),
+    we get Eq. 27:
+
+    $$
+    \frac{\partial S}{\partial P} = C^S \frac{\partial v}{\partial P}
+    $$
+
+    or
+
+    $$
+    \frac{\partial J}{\partial P} = C^J \frac{\partial v}{\partial P}
+    $$
+
+    where $C^S$ is the concentration control matrix and $C^J$ is the flux control matrix (see `control_matrices`).
+
+    Returns
+    -------
+    torch.Tensor:
+        $\frac{\partial S}{\partial P}$ if `d_conc` else $\frac{\partial J}{\partial P}$.
+    """
+    c_s, c_j = control_matrices(model)
+    v_wrt = get_jacobian(model, prior_wrt, False)
+    c = c_s if d_conc else c_j
+    return c @ v_wrt
