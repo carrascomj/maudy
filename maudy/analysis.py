@@ -1,6 +1,5 @@
 """Analyse the output of a model."""
 
-from functools import reduce
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +12,6 @@ from maud.loading_maud_inputs import load_maud_input
 from pyro.optim import ClippedAdam
 from pyro.infer import Predictive, config_enumerate
 
-from .control import get_jacobian
 from .model import Maudy
 from .io import load_maudy_config
 
@@ -125,57 +123,6 @@ def predict(
             num_samples=num_epochs,
             return_sites=var_names,
         )(None, None, False, 1.0, not oos)
-
-
-def get_balanced_conc_jacobian(model: Maudy, prior_str: str) -> pd.DataFrame:
-    r"""Compute Jacobian matrix of the balanced concentrations with respect to the
-    parameter $p$ $\fraction{\partial [C]_b}{\partial p}$.
-
-    Parameters
-    ----------
-    model : Maudy
-        The model to use.
-    prior_str : str
-        The sample site $p$, one of ["enzyme_conc", "unb_conc", "kcat_drain"].
-
-    Returns
-    -------
-    pd.DataFrame
-        The Jacobian, with named indices (balanced mets) and columns with the
-        named elements of `prior_str` and an "experiment" column.
-    """
-    allowed_vars = ["unb_conc", "kcat_drain", "enzyme_conc"]
-    assert (
-        prior_str in allowed_vars
-    ), f"the prior sample site should be one of {allowed_vars}"
-    j = get_jacobian(model, prior_str)
-    unbalanced_mics = [met.id for met in model.kinetic_model.mics if not met.balanced]
-    index = [met.id for met in model.kinetic_model.mics if met.balanced]
-    # gather possible columns
-    drain_names = model.maud_params.drain_train.prior.ids[1]
-    ki_names = model.maud_params.ki.prior.ids[0]
-    kcat_pars = model.maud_params.kcat.prior
-    enzymatic_reactions = [x.split("_")[-1] for x in kcat_pars.ids[-1]]
-    columns = (
-        unbalanced_mics
-        if prior_str == "unb_conc"
-        else drain_names
-        if prior_str == "kcat_drain"
-        else ki_names
-        if prior_str == "ki"
-        else enzymatic_reactions
-    )
-    df = pd.DataFrame(
-        j.reshape(-1, len(columns)),
-        index=index * len(model.experiments),
-        columns=columns,
-    )
-    df["experiment"] = (
-        [exp for exp in model.experiments for _ in index]
-        if len(model.experiments) > 1
-        else model.experiments[0]
-    )
-    return df
 
 
 def ppc(model_output: Path, num_epochs: int = 800):
