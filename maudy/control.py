@@ -37,7 +37,7 @@ COMP_VARS = {"dgr", "ln_bal_conc"}
 
 
 def get_jacobian(
-    model: Maudy, prior_wrt: str = "enzyme_conc", d_conc: bool = True, samples: int = 1000,
+    model: Maudy, prior_wrt: str = "enzyme_conc", d_conc: bool = True, samples: int = 1000, posterior: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Generate gradients of the steady-state concentrations or fluxes w.r.t. a _prior variable_ `prior_wrt`.
 
@@ -56,6 +56,11 @@ def get_jacobian(
         if d_conc, the numerator are steady-state concentrations, fluxes otherwise.
     samples: int
         number of samples to draw from the posterior to calculate the jacobian on.
+        Only used if `posterior` is None.
+    posterior: dict[str, torch.Tensor] } | None, default=None
+        samples generative from the posterior predictive distribution, which
+        should encompass all of the sampling sites of the `Maudy.model`. If not
+        specified, `model` will be sampled accordingly.
 
     Returns
     -------
@@ -68,7 +73,9 @@ def get_jacobian(
     # get sampled values from trained guide
     # guide_trace = poutine.trace(model.guide).get_trace(None, None, True, 1.0, True)
     var_names = tuple(set(DECODER_TO_SAMPLE.keys()) | PRIOR_VARS | COMP_VARS)
-    posterior = predict(model, samples, var_names)
+    if posterior is None:
+        posterior = predict(model, samples, var_names)
+    samples = next(iter(posterior.values())).shape[0]
     posterior = {site: t.squeeze(1) if site in EXP_INDEPENDENT else t for site, t in posterior.items()}
     # gather prior model variables
     prior_variable = posterior[prior_wrt]
@@ -175,7 +182,7 @@ def prune_jacobian(j: torch.Tensor) -> torch.Tensor:
     return pruned
 
 
-def control_matrices(model: Maudy, samples: int = 1000) -> tuple[torch.Tensor, torch.Tensor]:
+def control_matrices(model: Maudy, samples: int = 1000, posterior: dict[str, torch.Tensor] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Get concentration and flux control matrix.
 
     Following ["Notes on Metabolic Control Analysis" by Gunawardena 2002](http://jeremy-gunawardena.com/papers/mca.pdf),
@@ -199,7 +206,7 @@ def control_matrices(model: Maudy, samples: int = 1000) -> tuple[torch.Tensor, t
     """
     # we use the notation in Gunawardena 2002
     # balanced concentrations w.r.t. fluxes (both enzymatic and drains) (Eq. 28)
-    elasticity = get_jacobian(model, "ln_bal_conc", False, samples=samples)
+    elasticity = get_jacobian(model, "ln_bal_conc", False, samples=samples, posterior=posterior)
     N = model.S.T[:, model.balanced_mics_idx].permute(1, 0)
     c_s = -torch.inverse(N @ elasticity) @ N
     I = torch.eye(c_s.shape[-1], c_s.shape[-1]).unsqueeze(0)
@@ -232,9 +239,9 @@ def mca(
     torch.Tensor, [Samples, Experiments, A, B]:
         $\frac{\partial S}{\partial P}$ if `d_conc` else $\frac{\partial J}{\partial P}$.
     """
-    # FIXME(carrascomj): control_matrices and get_jacobian should be computed
-    # from the same drawn samples
-    c_s, c_j = control_matrices(model, samples=samples)
-    v_wrt = get_jacobian(model, prior_wrt, False, samples=samples)
+    var_names = tuple(set(DECODER_TO_SAMPLE.keys()) | PRIOR_VARS | COMP_VARS)
+    posterior = predict(model, samples, var_names)
+    c_s, c_j = control_matrices(model, posterior=posterior)
+    v_wrt = get_jacobian(model, prior_wrt, False, posterior=posterior)
     c = c_s if d_conc else c_j
     return c @ v_wrt
