@@ -82,9 +82,7 @@ def get_jacobian(
     prior_val = prior_variable.detach().clone().requires_grad_(True)
 
     decoder_inputs = {
-        nn_arg: posterior[site]
-        if site in posterior
-        else model.float_tensor([])
+        nn_arg: posterior[site] if site in posterior else model.float_tensor([])
         for site, nn_arg in DECODER_TO_SAMPLE.items()
     }
 
@@ -104,8 +102,7 @@ def get_jacobian(
                 nodes = posterior | {prior_wrt: v}
                 encoder_inputs = _pack_encoder_inputs(nodes)
                 x = model.concoder(**encoder_inputs)[-2]
-                # x is reshaped in decoder to pass it through normalizations
-                packed_inputs = (decoder_inputs | {"met": x})
+                packed_inputs = decoder_inputs | {"met": x}
                 c_bal = model.decoder(**packed_inputs)
             if d_conc:
                 return c_bal

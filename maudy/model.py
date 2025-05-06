@@ -541,7 +541,6 @@ class Maudy(nn.Module):
 
         return correction_mask
 
-
     def normalize_correction(self, correction: torch.Tensor, ln_bal_conc: torch.Tensor, annealing_factor: float):
         """Gets quenching correction (if `self.quench` is True).
 
