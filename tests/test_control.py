@@ -2,8 +2,20 @@
 
 import pytest
 import torch
-from maudy.control import control_matrices, get_jacobian, mca
+from maudy.model import Maudy
+from maudy.control import control_matrices, get_jacobian, mca, inverse_function
 from maudy.train import train
+from maud.loading_maud_inputs import MaudInput
+from xarray import DataArray
+
+
+def test_inverse_function_recovers_snapshot(methionine_model: MaudInput, elasticities: DataArray, concentration_control_matrix: DataArray):
+    elas = torch.from_numpy(elasticities.to_numpy()).double()
+    model = Maudy(methionine_model)
+    N = model.S[model.balanced_mics_idx, :].double()
+    c_s, _ = inverse_function(elas, N)
+    ccm = torch.from_numpy(concentration_control_matrix.to_numpy()).double()
+    assert torch.allclose(c_s, ccm, atol=1e-6, rtol=1e-5)
 
 
 @pytest.mark.parametrize("prior_str", ["unb_conc", "enzyme_conc", "kcat", "km"])

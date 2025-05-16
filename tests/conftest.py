@@ -8,6 +8,7 @@ from maudy.io import load_maudy_config
 from maud.data_model.experiment import MeasurementType
 from maud.data_model.hardcoding import ID_SEPARATOR
 from maud.loading_maud_inputs import MaudInput, load_maud_input
+from xarray import DataArray
 
 
 def load(path: Path) -> MaudInput:
@@ -232,3 +233,31 @@ def methionine_reversibility(idata_methionine: az.InferenceData) -> tuple[pd.Dat
 
     return dgf, dgr, reversibility, psi
 
+
+@fixture
+def elasticities() -> DataArray:
+    """
+    Coordinates
+      * chain
+      * draw
+      * elasticity_dim_0 -> experiments
+      * elasticity_dim_1 -> enzymes
+      * elasticity_dim_2 -> independent mets
+    """
+    elas_path = Path(__file__).parent / "data" / "elas.nc"
+    elas = az.from_netcdf(elas_path).posterior.elasticity
+    return elas
+
+
+@fixture
+def concentration_control_matrix() -> DataArray:
+    """
+    Coordinates
+      * chain
+      * draw
+      * experiments
+      * edges
+      * independent_mics
+    """
+    nnc_path = Path(__file__).parent / "data" / "ccm.nc"
+    return az.from_netcdf(nnc_path).posterior.concentration_control_matrix

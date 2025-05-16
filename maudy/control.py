@@ -204,8 +204,12 @@ def control_matrices(model: Maudy, samples: int = 1000, posterior: dict[str, tor
     # we use the notation in Gunawardena 2002
     # balanced concentrations w.r.t. fluxes (both enzymatic and drains) (Eq. 28)
     elasticity = get_jacobian(model, "ln_bal_conc", False, samples=samples, posterior=posterior)
-    N = model.S.T[:, model.balanced_mics_idx].permute(1, 0)
-    c_s = -torch.inverse(N @ elasticity) @ N
+    N = model.S[model.balanced_mics_idx, :]
+    return inverse_function(elasticity, N)
+
+
+def inverse_function(elasticity: torch.Tensor, N: torch.Tensor):
+    c_s = -torch.linalg.pinv(N @ elasticity, rcond=1e-9) @ N
     I = torch.eye(c_s.shape[-1], c_s.shape[-1]).unsqueeze(0)
     c_j = I + elasticity @ c_s
     return c_s, c_j
