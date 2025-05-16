@@ -41,10 +41,7 @@ def get_jacobian(
 ) -> torch.Tensor:
     r"""Generate gradients of the steady-state concentrations or fluxes w.r.t. a _prior variable_ `prior_wrt`.
 
-    Prior variables refers to the prior model (kinetic paramters, enzyme conc, etc.).
-    These prior variables are first sampled to then fixed them to generate a
-    conditioned model. The jacobian is extracted exclusively from passing
-    the output of the conditioned model to the decoder neural network.
+    Prior variables refer to the prior model (kinetic paramters, enzyme conc, etc.).
 
     Parameters
     ----------
@@ -88,29 +85,27 @@ def get_jacobian(
 
     def forward(v, posterior, decoder_inputs):
         if prior_wrt == "ln_bal_conc":
-            # neural networks are not involved
-            nodes = posterior
             c_bal = v
         else:
-            if prior_wrt in DECODER_TO_SAMPLE and d_conc:
+            if prior_wrt in DECODER_TO_SAMPLE:
                 # the output is only dependant on the decoder
-                c_bal = model.decoder(
+                c_bal = model.safexp(model.decoder(
                     **(decoder_inputs | {DECODER_TO_SAMPLE[prior_wrt]: v})
-                )
+                ))
             else:
                 # the output dependends on both decoder and encoder
-                nodes = posterior | {prior_wrt: v}
-                encoder_inputs = _pack_encoder_inputs(nodes)
+                posterior = posterior | {prior_wrt: v}
+                encoder_inputs = _pack_encoder_inputs(posterior)
                 x = model.concoder(**encoder_inputs)[-2]
                 packed_inputs = decoder_inputs | {"met": x}
-                c_bal = model.decoder(**packed_inputs)
+                c_bal = model.safexp(model.decoder(**packed_inputs))
             if d_conc:
                 return c_bal
         conc = c_bal.new_ones(len(model.experiments), model.num_mics)
-        conc[:, model.balanced_mics_idx] = model.safexp(c_bal)
-        conc[:, model.unbalanced_mics_idx] = _get(nodes, "unb_conc")
+        conc[:, model.balanced_mics_idx] = c_bal
+        conc[:, model.unbalanced_mics_idx] = _get(posterior, "unb_conc")
         return compute_flux(
-            model, conc, *[_get(nodes, site) for site in ["km", "ki", "kcat",
+            model, conc, *[_get(posterior, site) for site in ["km", "ki", "kcat",
             "enzyme_conc", "dgr", "psi", "tc", "dc", "kcat_drain"]], 1e-9
         )  # fmt: skip
 
@@ -118,6 +113,9 @@ def get_jacobian(
         posterior = {site: t[i] if t.numel() > 0 else t for site, t in posterior.items()}
         decoder_inputs = {site: t[i] if t.numel() > 0 else t for site, t in decoder_inputs.items()}
         return partial(forward, posterior=posterior, decoder_inputs=decoder_inputs)
+
+    if prior_wrt == "ln_bal_conc":
+        prior_val = model.safexp(prior_val)
 
     # this could be broadcasted but it's not since it would require to rearrange
     # the whole src/kinetics.py indexing, which is quite involved

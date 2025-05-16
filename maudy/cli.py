@@ -46,7 +46,7 @@ def tensor_to_tidy_df(
     df["A"] = df["A_idx"].map(dict(enumerate(a_names)))
     df["B"] = df["B_idx"].map(dict(enumerate(b_names)))
 
-    df["Value"] = x.reshape(-1).cpu().numpy().astype(float)
+    df["Value"] = x.reshape(-1).detach().cpu().numpy().astype(float)
 
     df = df.drop(columns=["Experiment_idx", "A_idx", "B_idx"])
     df = df.astype(
