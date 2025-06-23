@@ -39,14 +39,13 @@ def train(
     eval_flux: bool,
     eval_conc: bool,
     annealing_epochs: int,
-    normalize: bool,
 ) -> tuple[Maudy, PyroOptim]:
     pyro.clear_param_store()
     # Enable optional validation warnings
     pyro.enable_validation(False)
 
     # Instantiate instance of model/guide and various neural networks
-    maudy = Maudy(maud_input, normalize, correct)
+    maudy = Maudy(maud_input, correct)
     maudy.to_double()
     if torch.cuda.is_available():
         maudy.cuda()
@@ -87,7 +86,6 @@ def sample(
     maud_dir: Path,
     num_epochs: int = 100,
     annealing_stage: Annotated[float, Option(help="Part of training that will be annealing the KL")] = 0.2,
-    normalize: Annotated[bool, Option(help="Whether to normalize input and output of NN")] = False,
     out_dir: Optional[Path] = None,
     penalize_ss: bool = True,
     correct: bool = False,

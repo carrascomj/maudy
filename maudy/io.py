@@ -19,6 +19,13 @@ class MaudyConfig(BaseModel):
     correction_groups: list[list[str]] = []
     temperature: float = T
     dgf_water: float = DGF_WATER
+    normalize: bool = False
+    """whether to normalize the input and output of the neural network.
+    The input is normalize such that positive values are turned to log-space
+    and drains and fluxes are multiplied by 1e6 (mumol). The output is
+    clamped between 0.6 orders of magnitude of the higher and lowest
+    observed or prior concentrations.
+    """
 
 
 def load_maudy_config(maud_dir: Path) -> MaudyConfig:

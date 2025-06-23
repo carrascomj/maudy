@@ -34,7 +34,7 @@ def get_loc_from_mu_scale(mu: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
 
 
 class Maudy(nn.Module):
-    def __init__(self, maud_input: MaudInput, normalize: bool = False, correct: bool = False):
+    def __init__(self, maud_input: MaudInput, correct: bool = False):
         """Initialize the priors of the model.
 
         maud_input: MaudInput
@@ -44,12 +44,6 @@ class Maudy(nn.Module):
         optimize_unbalanced: Optional[list[str]]
             unbalanced metabolite-in-compartment identifiers to infer as the
             output of the neural network.
-        normalize: bool, default=False
-            whether to normalize the input and output of the neural network.
-            The input is normalize such that positive values are turned to log-space
-            and drains and fluxes are multiplied by 1e6 (mumol). The output is
-            clamped between 0.6 orders of magnitude of the higher and lowest
-            observed or prior concentrations.
         correction: bool, default=False
             whether to add a model that learns a transformation from steady
             state concentrations - that fits the SSD and fluxes - to observed
@@ -61,6 +55,7 @@ class Maudy(nn.Module):
         self.temperature = maud_input._maudy_config.temperature
         self.dgf_water = maud_input._maudy_config.dgf_water
         self.rt = self.temperature * 0.008314
+        normalize: bool = maud_input._maudy_config.normalize
 
         # 1. kcats
         kcat_pars = self.maud_params.kcat.prior

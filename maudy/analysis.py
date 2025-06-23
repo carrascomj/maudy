@@ -21,12 +21,9 @@ def load(model_output: Path):
     maud_input = load_maud_input(str(user_input))
     state_dict = torch.load(model_output / "model.pt", map_location="cpu")
     maud_input._maudy_config = load_maudy_config(user_input)
-    # hack, if normalize was not applied, the decoder has a plain FF layer
-    # otherwise, a sequential where the first element is the layer
-    normalize = "decoder.loc_layer.0.bias" in state_dict["maudy"]
+    # hack, if correct was applied, there is a `correct` module
     correct = "correct.0.0.bias" in state_dict["maudy"]
-    print(f"{normalize=} | {correct=}")
-    maudy = Maudy(maud_input, normalize, correct)
+    maudy = Maudy(maud_input, correct)
     maudy.load_state_dict(state_dict["maudy"])
     pyro.get_param_store().load(
         str(model_output / "model_params.pt"), map_location="cpu"
